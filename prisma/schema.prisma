@@ -1,0 +1,269 @@
+// SVLSG Inventory System — data model (spec v0.1, section 2)
+//
+// Notes:
+// - "Enum-like" fields are stored as strings so the schema moves to Postgres
+//   unchanged. Allowed values live in src/lib/constants.ts.
+// - JSON blobs (category config, item specs, sampling plan, checklist) are
+//   stored as strings and parsed in src/lib. Keeps SQLite/Postgres parity.
+// - Stock balance is never stored: it is the sum of InventoryTransaction.qty.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  name      String
+  initials  String   @unique
+  role      String // warehouse | qc | admin
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  receiptsReceived Receipt[]              @relation("ReceiptReceivedBy")
+  lotsOperated     Lot[]                  @relation("LotOperator")
+  lotsReleased     Lot[]                  @relation("LotReleasedBy")
+  documents        Document[]
+  inspections      Inspection[]
+  transactions     InventoryTransaction[]
+  auditLogs        AuditLog[]
+}
+
+model Location {
+  id    Int    @id @default(autoincrement())
+  name  String @unique
+  rooms Room[]
+  lots  Lot[]
+}
+
+model Room {
+  id           Int                    @id @default(autoincrement())
+  name         String
+  locationId   Int
+  location     Location               @relation(fields: [locationId], references: [id])
+  transactions InventoryTransaction[]
+
+  @@unique([locationId, name])
+}
+
+model Category {
+  id         Int        @id @default(autoincrement())
+  name       String     @unique
+  codePrefix String     @unique // e.g. C-LID
+  parentId   Int?
+  parent     Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children   Category[] @relation("CategoryTree")
+  testPath   String? // e.g. ansi_sampling (F.WD.003)
+  // JSON: { specFields: [...], requirements: { at_receiving: [...], before_release: [...] } }
+  // See src/lib/category-config.ts
+  config     String     @default("{}")
+  items      Item[]
+}
+
+model Supplier {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  type        String // svlsg | customer_supplied
+  aslApproved Boolean   @default(false)
+  contactName String?
+  email       String?
+  phone       String?
+  notes       String?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  receipts    Receipt[]
+}
+
+// One per item TYPE, never per batch.
+model Item {
+  id         Int        @id @default(autoincrement())
+  code       String     @unique // auto: prefix + next number, e.g. C-LID-011
+  legacyCode String? // code used in the old spreadsheet, e.g. C-Lids-010-38mm
+  name       String
+  categoryId Int
+  category   Category   @relation(fields: [categoryId], references: [id])
+  specs      String     @default("{}") // JSON of category specFields, e.g. {"size":"38mm"}
+  active     Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  lots       Lot[]
+  documents  Document[] // spec sheet lives here (type "Spec sheet")
+}
+
+// One delivery. Can contain several lots.
+model Receipt {
+  id                       Int        @id @default(autoincrement())
+  receivingNo              String     @unique // REC-YYYY-###
+  dateReceived             DateTime
+  supplierId               Int
+  supplier                 Supplier   @relation(fields: [supplierId], references: [id])
+  supplierType             String // snapshot, editable: svlsg | customer_supplied
+  poInvoiceNo              String?
+  trackingNo               String?
+  carrierInspectionDone    Boolean    @default(false) // F.WD.001
+  segregation              String     @default("none") // organic | allergen | refrigeration | none
+  dockStatus               String     @default("received") // received | rejected
+  qtyMatchesPackingList    Boolean?
+  qtyMatchNote             String?
+  quarantineStickerApplied Boolean    @default(false)
+  receivedById             Int
+  receivedBy               User       @relation("ReceiptReceivedBy", fields: [receivedById], references: [id])
+  createdAt                DateTime   @default(now())
+  lots                     Lot[]
+  documents                Document[]
+}
+
+// One batch of one item.
+model Lot {
+  id                   Int                    @id @default(autoincrement())
+  itemId               Int
+  item                 Item                   @relation(fields: [itemId], references: [id])
+  receiptId            Int
+  receipt              Receipt                @relation(fields: [receiptId], references: [id])
+  supplierBatchNo      String?
+  lotNo                String?
+  mfgDate              DateTime?
+  expDate              DateTime?
+  cases                Int
+  unitsPerCase         Int
+  qtyReceived          Int // default cases * unitsPerCase
+  qtyOverrideReason    String? // required when qtyReceived != cases * unitsPerCase
+  unitCost             Decimal?
+  locationId           Int
+  location             Location               @relation(fields: [locationId], references: [id])
+  qcStatus             String                 @default("Quarantine") // Quarantine | Released | Rejected
+  releaseStickerPlaced Boolean?
+  releasedAt           DateTime?
+  releasedById         Int?
+  releasedBy           User?                  @relation("LotReleasedBy", fields: [releasedById], references: [id])
+  operatorId           Int
+  operator             User                   @relation("LotOperator", fields: [operatorId], references: [id])
+  createdAt            DateTime               @default(now())
+  documents            Document[] // box label photo, COA, packing list...
+  inspections          Inspection[]
+  transactions         InventoryTransaction[]
+
+  @@index([qcStatus])
+}
+
+model Document {
+  id           Int      @id @default(autoincrement())
+  lotId        Int?
+  lot          Lot?     @relation(fields: [lotId], references: [id])
+  receiptId    Int?
+  receipt      Receipt? @relation(fields: [receiptId], references: [id])
+  itemId       Int?
+  item         Item?    @relation(fields: [itemId], references: [id])
+  type         String // COA | Packing list | Invoice | Spec sheet | Photo | F.WD.001 | Other
+  fileName     String // original name
+  storagePath  String // relative to /uploads
+  mimeType     String?
+  sizeBytes    Int?
+  uploadedById Int
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+}
+
+// F.WD.003
+model Inspection {
+  id                    Int      @id @default(autoincrement())
+  lotId                 Int
+  lot                   Lot      @relation(fields: [lotId], references: [id])
+  inspectionLevel       String   @default("II")
+  lotSize               Int
+  codeLetter            String
+  plan                  String // JSON per defect class: [{cls, aql, codeLetter, sampleSize, ac, re}]
+  sampleSize            Int // sample actually drawn (largest of the plan)
+  casesSampled          Int?
+  itemsSampled          Int?
+  checklist             String   @default("{}") // JSON: { questionKey: "yes" | "no" | "na" }
+  criticalDefects       Int      @default(0)
+  majorDefects          Int      @default(0)
+  minorDefects          Int      @default(0)
+  defectNotes           String?
+  comments              String?
+  calculatedDisposition String // Approved | Rejected
+  disposition           String // final; differs only with overrideReason
+  overrideReason        String?
+  inspectedById         Int
+  inspectedBy           User     @relation(fields: [inspectedById], references: [id])
+  inspectedAt           DateTime @default(now())
+}
+
+model InventoryTransaction {
+  id                Int      @id @default(autoincrement())
+  lotId             Int
+  lot               Lot      @relation(fields: [lotId], references: [id])
+  type              String // receive | production_use | sample | sent_to_client | damaged_defect | adjustment
+  qty               Int // signed: + into stock, - out of stock
+  roomId            Int?
+  room              Room?    @relation(fields: [roomId], references: [id])
+  productOrCustomer String?
+  date              DateTime
+  operatorId        Int
+  operator          User     @relation(fields: [operatorId], references: [id])
+  notes             String?
+  createdAt         DateTime @default(now())
+
+  @@index([lotId])
+}
+
+// Append-only. Never update or delete rows.
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  at        DateTime @default(now())
+  action    String // create | update | delete
+  tableName String
+  recordId  String
+  field     String?
+  oldValue  String?
+  newValue  String?
+  reason    String?
+
+  @@index([tableName, recordId])
+}
+
+// Sequential numbers: "REC-2026" -> last REC number used that year,
+// "ITEM:C-LID" -> last item number used for that prefix.
+model Counter {
+  key   String @id
+  value Int    @default(0)
+}
+
+// ---- ANSI/ASQ Z1.4 reference tables (seed data — QA must verify vs printed standard) ----
+
+// Table 1: lot size -> code letter, per inspection level.
+model AnsiCodeLetter {
+  id              Int    @id @default(autoincrement())
+  inspectionLevel String // "II"
+  minLotSize      Int
+  maxLotSize      Int? // null = no upper limit
+  codeLetter      String
+
+  @@unique([inspectionLevel, minLotSize])
+}
+
+// Sample size per code letter.
+model AnsiSampleSize {
+  codeLetter String @id
+  sampleSize Int
+  sortOrder  Int    @unique // A=1 ... R=16, used to follow arrows
+}
+
+// Table 2-A (single sampling, normal inspection).
+// Either ac/re is set, or arrow is "up"/"down" (use first plan above/below).
+model AnsiPlan {
+  id         Int     @id @default(autoincrement())
+  codeLetter String
+  aql        String // stored as text to avoid float keys, e.g. "0.25"
+  ac         Int?
+  re         Int?
+  arrow      String? // up | down
+
+  @@unique([codeLetter, aql])
+}
