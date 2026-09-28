@@ -20,8 +20,9 @@ export async function nextItemCode(tx: Tx, codePrefix: string) {
 }
 
 // New receiving number, e.g. REC-2026-001 (resets each year).
+// `date` is a calendar date stored as UTC midnight.
 export async function nextReceivingNo(tx: Tx, date: Date) {
-  const year = date.getFullYear();
+  const year = date.getUTCFullYear();
   const n = await nextCounter(tx, `REC-${year}`);
   return `REC-${year}-${String(n).padStart(3, "0")}`;
 }

@@ -1,26 +1,41 @@
-import { prisma } from "@/lib/prisma";
+import { loadAuditEvents } from "@/lib/audit-format";
 import { Table, formatDateTime } from "@/components/ui";
 
-export async function AuditHistory({ table, recordId }: { table: string; recordId: number | string }) {
-  const rows = await prisma.auditLog.findMany({
-    where: { tableName: table, recordId: String(recordId) },
-    include: { user: true },
-    orderBy: [{ at: "desc" }, { id: "desc" }],
-  });
+// Audit trail readable by an auditor: names not IDs, one row per save, empty values hidden.
+// `scopes` lists every record that belongs on this page (e.g. a lot, its receipt and its documents).
+export async function AuditHistory({ scopes }: { scopes: { table: string; ids: (number | string)[] }[] }) {
+  const events = await loadAuditEvents(scopes);
   return (
     <Table
-      head={["When", "Who", "Action", "Field", "Old", "New", "Reason"]}
-      empty={rows.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">No history yet.</p>}
+      head={["When", "Who", "What", "Details", "Reason"]}
+      empty={events.length === 0 && <p className="px-4 py-3 text-sm text-slate-500">No history yet.</p>}
     >
-      {rows.map((r) => (
-        <tr key={r.id} className="align-top">
-          <td className="whitespace-nowrap px-4 py-2 text-slate-600">{formatDateTime(r.at)}</td>
-          <td className="px-4 py-2">{r.user?.initials ?? "system"}</td>
-          <td className="px-4 py-2">{r.action}</td>
-          <td className="px-4 py-2 font-mono text-xs">{r.field}</td>
-          <td className="max-w-xs break-words px-4 py-2 text-slate-500">{r.oldValue}</td>
-          <td className="max-w-xs break-words px-4 py-2">{r.newValue}</td>
-          <td className="px-4 py-2 text-slate-600">{r.reason}</td>
+      {events.map((ev) => (
+        <tr key={ev.key} className="align-top">
+          <td className="whitespace-nowrap px-4 py-2 text-slate-600">{formatDateTime(ev.at)}</td>
+          <td className="whitespace-nowrap px-4 py-2">{ev.who}</td>
+          <td className="px-4 py-2">
+            <span className="font-medium">{ev.action}</span> <span className="text-slate-600">{ev.record}</span>
+          </td>
+          <td className="px-4 py-2">
+            <ul className="space-y-0.5">
+              {ev.changes.map((c, i) => (
+                <li key={i} className="break-words">
+                  <span className="text-slate-500">{c.label}:</span>{" "}
+                  {ev.action === "Changed" ? (
+                    <>
+                      <span className="text-slate-500">{c.old ?? "(empty)"}</span>
+                      {" → "}
+                      <span>{c.new ?? "(empty)"}</span>
+                    </>
+                  ) : (
+                    <span>{c.new ?? c.old}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </td>
+          <td className="px-4 py-2 text-slate-600">{ev.reason}</td>
         </tr>
       ))}
     </Table>

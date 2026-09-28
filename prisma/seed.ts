@@ -35,33 +35,42 @@ const LIDS_CONFIG: CategoryConfig = {
     { key: "color", label: "Color", required: true },
     { key: "material", label: "Material / type", required: true },
   ],
+  // `ref` = the form / SOP / regulation shown next to each checklist line.
+  // TODO(confirm with QA): refs for the plain receiving-log fields.
   requirements: {
     at_receiving: [
-      { key: "supplier", label: "Supplier", source: "field", path: "receipt.supplierId" },
-      { key: "dateReceived", label: "Date received", source: "field", path: "receipt.dateReceived" },
-      { key: "carrierInspection", label: "Truck inspection (F.WD.001)", source: "field", path: "receipt.carrierInspectionDone" },
-      { key: "batchOrLotNo", label: "Supplier batch no. or lot no.", source: "field", anyOf: ["lot.supplierBatchNo", "lot.lotNo"] },
-      { key: "cases", label: "Number of cases", source: "field", path: "lot.cases" },
-      { key: "unitsPerCase", label: "Units per case", source: "field", path: "lot.unitsPerCase" },
-      { key: "qtyMatch", label: "Total matches packing list / PO", source: "field", path: "receipt.qtyMatchesPackingList" },
-      { key: "segregation", label: "Special segregation", source: "field", path: "receipt.segregation" },
-      { key: "location", label: "Location", source: "field", path: "lot.locationId" },
-      { key: "boxLabelPhoto", label: "Photo of box label", source: "document", documentType: "Photo", attachedTo: "lot" },
-      { key: "quarantineSticker", label: "Quarantine sticker on every box", source: "field", path: "receipt.quarantineStickerApplied" },
+      { key: "supplier", label: "Supplier", source: "field", path: "receipt.supplierId", ref: "Receiving log" },
+      { key: "dateReceived", label: "Date received", source: "field", path: "receipt.dateReceived", ref: "Receiving log" },
+      { key: "carrierInspection", label: "Truck inspection done", source: "field", path: "receipt.carrierInspectionDone", requireTrue: true, ref: "F.WD.001" },
+      { key: "batchOrLotNo", label: "Supplier batch no. or lot no.", source: "field", anyOf: ["lot.supplierBatchNo", "lot.lotNo"], ref: "Receiving log" },
+      { key: "cases", label: "Number of cases", source: "field", path: "lot.cases", ref: "Receiving log" },
+      { key: "unitsPerCase", label: "Units per case", source: "field", path: "lot.unitsPerCase", ref: "Receiving log" },
+      { key: "qtyMatch", label: "Total checked against packing list / PO", source: "field", path: "receipt.qtyMatchesPackingList", ref: "Receiving log" },
+      { key: "segregation", label: "Special segregation", source: "field", path: "receipt.segregation", ref: "Receiving log" },
+      { key: "location", label: "Location", source: "field", path: "lot.locationId", ref: "Receiving log" },
+      { key: "boxLabelPhoto", label: "Photo of box label", source: "document", documentType: "Photo", attachedTo: "lot", ref: "Receiving log" },
+      { key: "quarantineSticker", label: "Quarantine sticker on every box", source: "field", path: "receipt.quarantineStickerApplied", requireTrue: true, ref: "21 CFR 111" },
     ],
     before_release: [
-      { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item" },
-      { key: "poInvoiceNo", label: "PO / invoice no.", source: "field", path: "receipt.poInvoiceNo" },
-      { key: "unitCost", label: "Unit cost", source: "field", path: "lot.unitCost" },
-      { key: "packingListOrCoa", label: "Packing list / COA", source: "document", attachedTo: "lot", anyOf: ["Packing list", "COA"] },
-      { key: "inspection", label: "F.WD.003 inspection", source: "inspection" },
+      { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item", ref: "21 CFR 111" },
+      { key: "poInvoiceNo", label: "PO / invoice no.", source: "field", path: "receipt.poInvoiceNo", ref: "Receiving log" },
+      { key: "unitCost", label: "Unit cost", source: "field", path: "lot.unitCost", ref: "Inventory card" },
+      { key: "packingListOrCoa", label: "Packing list / COA", source: "document", attachedTo: "lot", anyOf: ["Packing list", "COA"], ref: "21 CFR 111" },
+      { key: "inspection", label: "Incoming inspection", source: "inspection", ref: "F.WD.003", owner: "qc" },
     ],
   },
+  itemRequirements: [
+    { key: "size", label: "Size", source: "field", path: "item.specs.size", ref: "Item master" },
+    { key: "color", label: "Color", source: "field", path: "item.specs.color", ref: "Item master" },
+    { key: "material", label: "Material / type", source: "field", path: "item.specs.material", ref: "Item master" },
+    { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item", ref: "21 CFR 111" },
+  ],
 };
 
 const EMPTY_CONFIG: CategoryConfig = {
   specFields: [],
   requirements: { at_receiving: [], before_release: [] },
+  itemRequirements: [],
 };
 
 // TODO: fill in spec fields / requirements / test path for the other categories.

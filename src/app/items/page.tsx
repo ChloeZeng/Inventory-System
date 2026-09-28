@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
+import { itemChecklist } from "@/lib/records";
+import { CompletionBar } from "@/components/progress";
 import { Badge, PageHeader, Table, buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
 
 export default async function ItemsPage({
@@ -20,7 +22,7 @@ export default async function ItemsPage({
     },
     include: {
       category: true,
-      documents: { where: { type: "Spec sheet" }, select: { id: true } },
+      documents: { select: { type: true } },
       _count: { select: { lots: true } },
     },
     orderBy: { code: "asc" },
@@ -55,7 +57,7 @@ export default async function ItemsPage({
       </form>
 
       <Table
-        head={["Code", "Name", "Category", "Specs", "Spec sheet", "Lots"]}
+        head={["Code", "Name", "Category", "Specs", "Spec sheet", "Complete", "Lots"]}
         empty={items.length === 0 && <p className="px-4 py-6 text-center text-sm text-slate-500">No items match.</p>}
       >
         {items.map((i) => (
@@ -72,7 +74,10 @@ export default async function ItemsPage({
             <td className="px-4 py-2 text-slate-600">{i.category.name}</td>
             <td className="px-4 py-2 text-slate-600">{formatSpecs(parseCategoryConfig(i.category.config), parseSpecs(i.specs)) || "—"}</td>
             <td className="px-4 py-2">
-              {i.documents.length ? <Badge tone="green">on file</Badge> : <Badge tone="amber">missing</Badge>}
+              {i.documents.some((d) => d.type === "Spec sheet") ? <Badge tone="green">on file</Badge> : <Badge tone="amber">missing</Badge>}
+            </td>
+            <td className="px-4 py-2">
+              <CompletionBar summary={itemChecklist(i)} compact />
             </td>
             <td className="px-4 py-2 tabular-nums">{i._count.lots}</td>
           </tr>

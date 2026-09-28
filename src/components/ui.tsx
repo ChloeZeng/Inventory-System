@@ -40,9 +40,19 @@ export function PageHeader({
   );
 }
 
-export function Card({ title, children, className = "" }: { title?: React.ReactNode; children: React.ReactNode; className?: string }) {
+export function Card({
+  title,
+  children,
+  className = "",
+  id,
+}: {
+  title?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+  id?: string;
+}) {
   return (
-    <section className={`rounded-lg border border-slate-200 bg-white p-5 shadow-sm ${className}`}>
+    <section id={id} className={`rounded-lg border border-slate-200 bg-white p-5 shadow-sm ${className}`}>
       {title && <h2 className="mb-4 text-base font-semibold">{title}</h2>}
       {children}
     </section>
@@ -119,4 +129,15 @@ export function FormMessage({ state }: { state: { error?: string; ok?: string } 
 
 export function formatDateTime(d: Date) {
   return d.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" });
+}
+
+// Calendar dates (date received, mfg, exp) are stored as UTC midnight.
+export function formatDate(d: Date | null | undefined) {
+  return d ? d.toLocaleDateString("en-US", { dateStyle: "medium", timeZone: "UTC" }) : "—";
+}
+
+export function formatMoney(v: { toString(): string } | number | null | undefined, digits = 4) {
+  if (v === null || v === undefined) return "—";
+  const n = Number(v.toString());
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: digits });
 }

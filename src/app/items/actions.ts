@@ -4,11 +4,12 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
-import { parseCategoryConfig, parseSpecs, type CategoryConfig } from "@/lib/category-config";
+import { parseCategoryConfig, parseSpecs, sameSpecs, type CategoryConfig } from "@/lib/category-config";
 import { nextItemCode } from "@/lib/numbering";
 import { auditCreate, auditUpdate } from "@/lib/audit";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
-import { DOCUMENT_TYPES } from "@/lib/constants";
+import { ITEM_DOCUMENT_TYPES } from "@/lib/constants";
+import { createDocument } from "@/lib/documents";
 import { type ActionState, bool, errorMessage, str } from "@/lib/forms";
 
 function readSpecs(config: CategoryConfig, formData: FormData) {
@@ -20,11 +21,6 @@ function readSpecs(config: CategoryConfig, formData: FormData) {
     else if (f.required) fieldErrors[`spec_${f.key}`] = `${f.label} is required.`;
   }
   return { specs, fieldErrors };
-}
-
-function sameSpecs(a: Record<string, string>, b: Record<string, string>) {
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  return [...keys].every((k) => (a[k] ?? "").toLowerCase() === (b[k] ?? "").toLowerCase());
 }
 
 export async function createItem(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -67,17 +63,7 @@ export async function createItem(_prev: ActionState, formData: FormData): Promis
         recordId: item.id,
         values: { code, name, legacyCode, categoryId, specs },
       });
-      if (saved) {
-        const doc = await tx.document.create({
-          data: { ...saved, itemId: item.id, type: "Spec sheet", uploadedById: user.id },
-        });
-        await auditCreate(tx, {
-          userId: user.id,
-          table: "Document",
-          recordId: doc.id,
-          values: { itemId: item.id, type: doc.type, fileName: doc.fileName },
-        });
-      }
+      if (saved) await createDocument(tx, user.id, saved, "Spec sheet", { itemId: item.id });
       return item.id;
     });
   } catch (e) {
@@ -118,8 +104,7 @@ export async function updateItem(itemId: number, _prev: ActionState, formData: F
       if (n) await tx.item.update({ where: { id: item.id }, data: { ...after, specs: JSON.stringify(specs) } });
       return n;
     });
-    revalidatePath("/items");
-    revalidatePath(`/items/${itemId}`);
+    revalidatePath("/", "layout");
     return { ok: changed ? `Saved ${changed} change${changed > 1 ? "s" : ""}.` : "No changes." };
   } catch (e) {
     return { error: errorMessage(e) };
@@ -132,20 +117,11 @@ export async function uploadItemDocument(itemId: number, _prev: ActionState, for
     const file = fileFromForm(formData, "file");
     if (!file) return { error: "Choose a file." };
     const type = str(formData, "type") ?? "Spec sheet";
-    if (!(DOCUMENT_TYPES as readonly string[]).includes(type)) return { error: "Unknown document type." };
+    if (!(ITEM_DOCUMENT_TYPES as readonly string[]).includes(type)) return { error: "Unknown document type." };
 
     const saved = await saveUpload(file, "items");
-    await prisma.$transaction(async (tx) => {
-      const doc = await tx.document.create({ data: { ...saved, itemId, type, uploadedById: user.id } });
-      await auditCreate(tx, {
-        userId: user.id,
-        table: "Document",
-        recordId: doc.id,
-        values: { itemId, type, fileName: doc.fileName },
-      });
-    });
-    revalidatePath("/items");
-    revalidatePath(`/items/${itemId}`);
+    await prisma.$transaction((tx) => createDocument(tx, user.id, saved, type, { itemId }));
+    revalidatePath("/", "layout");
     return { ok: `Uploaded ${file.name}.` };
   } catch (e) {
     return { error: errorMessage(e) };

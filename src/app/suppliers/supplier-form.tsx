@@ -45,18 +45,20 @@ export function SupplierForm({
         </select>
       </Field>
 
-      <Field
-        label="Approved Supplier List (ASL)"
-        error={fe.aslApproved}
-        hint={canApprove ? "Receiving from a supplier that is not approved shows a warning." : "Only QC or admin can change this."}
-      >
-        <label className="flex items-center gap-2 text-sm">
-          {/* Disabled checkboxes are not submitted, so mirror the current value in a hidden field. */}
-          {!canApprove && initial?.aslApproved && <input type="hidden" name="aslApproved" value="on" />}
-          <input type="checkbox" name="aslApproved" defaultChecked={initial?.aslApproved ?? false} disabled={!canApprove} />
-          ASL approved
-        </label>
-      </Field>
+      <div id="field-aslApproved">
+        <Field
+          label="Approved Supplier List (ASL, F.QC.010)"
+          error={fe.aslApproved}
+          hint={canApprove ? "Receiving from a supplier that is not approved shows a warning." : "Only QC or admin can change this."}
+        >
+          <label className="flex items-center gap-2 text-sm">
+            {/* Disabled checkboxes are not submitted, so mirror the current value in a hidden field. */}
+            {!canApprove && initial?.aslApproved && <input type="hidden" name="aslApproved" value="on" />}
+            <input type="checkbox" name="aslApproved" defaultChecked={initial?.aslApproved ?? false} disabled={!canApprove} />
+            ASL approved
+          </label>
+        </Field>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Field label="Contact name" htmlFor="contactName">

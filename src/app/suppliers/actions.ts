@@ -5,7 +5,9 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
 import { auditCreate, auditUpdate } from "@/lib/audit";
-import { SUPPLIER_TYPES } from "@/lib/constants";
+import { SUPPLIER_DOCUMENT_TYPES, SUPPLIER_TYPES } from "@/lib/constants";
+import { createDocument } from "@/lib/documents";
+import { fileFromForm, saveUpload } from "@/lib/uploads";
 import { type ActionState, bool, errorMessage, str } from "@/lib/forms";
 
 // Only QC / admin may approve or un-approve a supplier on the ASL.
@@ -82,9 +84,26 @@ export async function updateSupplier(supplierId: number, _prev: ActionState, for
       if (n) await tx.supplier.update({ where: { id: supplierId }, data: after });
       return n;
     });
-    revalidatePath("/suppliers");
-    revalidatePath(`/suppliers/${supplierId}`);
+    revalidatePath("/", "layout");
     return { ok: changed ? `Saved ${changed} change${changed > 1 ? "s" : ""}.` : "No changes." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// Supplier questionnaire (F.QC.009), agreement (F.QC.015), …
+export async function uploadSupplierDocument(supplierId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireUser();
+    const file = fileFromForm(formData, "file");
+    if (!file) return { error: "Choose a file." };
+    const type = str(formData, "type") ?? "";
+    if (!(SUPPLIER_DOCUMENT_TYPES as readonly string[]).includes(type)) return { error: "Unknown document type." };
+
+    const saved = await saveUpload(file, "suppliers");
+    await prisma.$transaction((tx) => createDocument(tx, user.id, saved, type, { supplierId }));
+    revalidatePath("/", "layout");
+    return { ok: `Uploaded ${file.name}.` };
   } catch (e) {
     return { error: errorMessage(e) };
   }

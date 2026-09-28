@@ -7,3 +7,8 @@
 body {
   @apply bg-slate-50 text-slate-900;
 }
+
+/* Checklist "Fix" links jump to #field-… / #documents: make the landing spot obvious. */
+:target {
+  @apply scroll-mt-6 rounded-md ring-2 ring-amber-400 ring-offset-4;
+}

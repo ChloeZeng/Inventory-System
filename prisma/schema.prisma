@@ -65,17 +65,18 @@ model Category {
 }
 
 model Supplier {
-  id          Int       @id @default(autoincrement())
-  name        String    @unique
+  id          Int        @id @default(autoincrement())
+  name        String     @unique
   type        String // svlsg | customer_supplied
-  aslApproved Boolean   @default(false)
+  aslApproved Boolean    @default(false)
   contactName String?
   email       String?
   phone       String?
   notes       String?
-  active      Boolean   @default(true)
-  createdAt   DateTime  @default(now())
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
   receipts    Receipt[]
+  documents   Document[] // questionnaire F.QC.009, agreement F.QC.015
 }
 
 // One per item TYPE, never per batch.
@@ -150,21 +151,23 @@ model Lot {
 }
 
 model Document {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   lotId        Int?
-  lot          Lot?     @relation(fields: [lotId], references: [id])
+  lot          Lot?      @relation(fields: [lotId], references: [id])
   receiptId    Int?
-  receipt      Receipt? @relation(fields: [receiptId], references: [id])
+  receipt      Receipt?  @relation(fields: [receiptId], references: [id])
   itemId       Int?
-  item         Item?    @relation(fields: [itemId], references: [id])
+  item         Item?     @relation(fields: [itemId], references: [id])
+  supplierId   Int?
+  supplier     Supplier? @relation(fields: [supplierId], references: [id])
   type         String // COA | Packing list | Invoice | Spec sheet | Photo | F.WD.001 | Other
   fileName     String // original name
   storagePath  String // relative to /uploads
   mimeType     String?
   sizeBytes    Int?
   uploadedById Int
-  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
-  uploadedAt   DateTime @default(now())
+  uploadedBy   User      @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime  @default(now())
 }
 
 // F.WD.003
