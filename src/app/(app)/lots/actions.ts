@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { requireUser } from "@/lib/current-user";
+import { requireQcAuthorized, requireUser } from "@/lib/current-user";
+import { releaseReadiness } from "@/lib/completeness";
+import { LOT_INCLUDE, lotStatus } from "@/lib/records";
 import { auditUpdate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
@@ -122,13 +124,10 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
   }
 }
 
-// Only QC (or admin) may accept a total that does not match the packing list / PO.
-const QC_ROLES = ["qc", "admin"];
-
+// Only a QC-authorized user may accept a total that does not match the packing list / PO.
 export async function resolveQtyDifference(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
-    const user = await requireUser();
-    if (!QC_ROLES.includes(user.role)) return { error: "Only QC can resolve a quantity difference." };
+    const user = await requireQcAuthorized();
     const lot = await prisma.lot.findUniqueOrThrow({ where: { id: lotId }, include: { receipt: true } });
     if (lot.receipt.qtyMatchesPackingList !== false)
       return { error: "Nothing to resolve: the total is not recorded as different from the packing list / PO." };
@@ -151,6 +150,59 @@ export async function resolveQtyDifference(lotId: number, _prev: ActionState, fo
     });
     revalidatePath("/", "layout");
     return { ok: "Difference resolved." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// Release (spec §4.4): QC-authorized only; blocked while any requirement is open
+// (the same releaseReadiness the Release panel shows); release sticker confirmed.
+export async function releaseLot(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireQcAuthorized();
+    const lot = await prisma.lot.findUniqueOrThrow({ where: { id: lotId }, include: LOT_INCLUDE });
+    if (lot.qcStatus !== "Quarantine") return { error: `This lot is already ${lot.qcStatus.toLowerCase()}.` };
+    const readiness = releaseReadiness(lotStatus(lot).summary);
+    if (!readiness.ready)
+      return { error: `Cannot release yet — ${readiness.open.length} open: ${readiness.open.map((r) => r.req.label).join(", ")}.` };
+    if (!bool(formData, "releaseStickerPlaced"))
+      return { error: "Confirm the release sticker is placed over the quarantine sticker.", fieldErrors: { releaseStickerPlaced: "Required." } };
+
+    const after = { qcStatus: "Released", releaseStickerPlaced: true, releasedAt: new Date(), releasedById: user.id };
+    await prisma.$transaction(async (tx) => {
+      await auditUpdate(tx, {
+        userId: user.id,
+        table: "Lot",
+        recordId: lot.id,
+        before: lot,
+        after,
+        reason: str(formData, "comment") ?? "Released by QC — all requirements met",
+      });
+      await tx.lot.update({ where: { id: lot.id }, data: after });
+    });
+    revalidatePath("/", "layout");
+    return { ok: "Lot released." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// Reject: QC-authorized only, from Quarantine, with a written reason.
+export async function rejectLot(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireQcAuthorized();
+    const lot = await prisma.lot.findUniqueOrThrow({ where: { id: lotId } });
+    if (lot.qcStatus !== "Quarantine") return { error: `This lot is already ${lot.qcStatus.toLowerCase()}.` };
+    const reason = str(formData, "reason");
+    if (!reason) return { error: "Give the reason for rejecting.", fieldErrors: { reason: "Required." } };
+
+    const after = { qcStatus: "Rejected", rejectedAt: new Date(), rejectedById: user.id, rejectionReason: reason };
+    await prisma.$transaction(async (tx) => {
+      await auditUpdate(tx, { userId: user.id, table: "Lot", recordId: lot.id, before: lot, after, reason });
+      await tx.lot.update({ where: { id: lot.id }, data: after });
+    });
+    revalidatePath("/", "layout");
+    return { ok: "Lot rejected." };
   } catch (e) {
     return { error: errorMessage(e) };
   }

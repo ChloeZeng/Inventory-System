@@ -52,7 +52,6 @@ export const SUPPLIER_REQUIREMENTS: Requirement[] = [
     documentType: "Supplier questionnaire",
     attachedTo: "supplier",
     ref: "F.QC.009",
-    owner: "qc",
   },
   {
     key: "agreement",
@@ -61,7 +60,6 @@ export const SUPPLIER_REQUIREMENTS: Requirement[] = [
     documentType: "Supplier agreement",
     attachedTo: "supplier",
     ref: "F.QC.015",
-    owner: "qc",
   },
   {
     key: "aslApproved",
@@ -74,8 +72,12 @@ export const SUPPLIER_REQUIREMENTS: Requirement[] = [
   },
 ];
 
-export function ownerOf(req: Requirement) {
-  return req.owner ?? (req.source === "inspection" ? "qc" : "warehouse");
+// "qc" = needs a QC-authorized user; "anyone" = any signed-in user.
+export type Owner = "anyone" | "qc";
+
+export function ownerOf(req: Requirement): Owner {
+  if (req.owner) return req.owner === "qc" ? "qc" : "anyone";
+  return req.source === "inspection" ? "qc" : "anyone";
 }
 
 function getPath(facts: Facts, path: string): unknown {
@@ -189,8 +191,9 @@ export function releaseReadiness(summary: CheckSummary) {
   return { ready: summary.complete, met: summary.met, total: summary.total, open: summary.open, stages };
 }
 
-export function ownerOfOpen(r: CheckResult) {
-  return r.status === "followup" && r.req.followUp?.owner ? r.req.followUp.owner : ownerOf(r.req);
+export function ownerOfOpen(r: CheckResult): Owner {
+  if (r.status === "followup" && r.req.followUp?.owner) return r.req.followUp.owner === "qc" ? "qc" : "anyone";
+  return ownerOf(r.req);
 }
 
 export function evaluateLot(requirements: Record<Stage, Requirement[]>, facts: Facts) {

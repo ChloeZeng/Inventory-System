@@ -5,13 +5,12 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
 import { auditCreate, auditUpdate } from "@/lib/audit";
-import { SUPPLIER_DOCUMENT_TYPES, SUPPLIER_TYPES } from "@/lib/constants";
+import { QC_AUTH_REQUIRED, SUPPLIER_DOCUMENT_TYPES, SUPPLIER_TYPES } from "@/lib/constants";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
 import { type ActionState, bool, errorMessage, str } from "@/lib/forms";
 
-// Only QC / admin may approve or un-approve a supplier on the ASL.
-const ASL_ROLES = ["qc", "admin"];
+// Approving or un-approving a supplier on the ASL (F.QC.010) is a QC decision.
 
 function readSupplier(formData: FormData) {
   const fieldErrors: Record<string, string> = {};
@@ -38,8 +37,7 @@ export async function createSupplier(_prev: ActionState, formData: FormData): Pr
   try {
     const user = await requireUser();
     const { values, fieldErrors } = readSupplier(formData);
-    if (values.aslApproved && !ASL_ROLES.includes(user.role))
-      fieldErrors.aslApproved = "Only QC or admin can mark a supplier as ASL approved.";
+    if (values.aslApproved && !user.qcAuthorized) fieldErrors.aslApproved = `${QC_AUTH_REQUIRED} to mark a supplier as ASL approved.`;
     if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
     if (await prisma.supplier.findUnique({ where: { name: values.name } }))
       return { error: "A supplier with this name already exists.", fieldErrors: { name: "Already exists." } };
@@ -65,7 +63,7 @@ export async function updateSupplier(supplierId: number, _prev: ActionState, for
     const reason = str(formData, "reason");
 
     if (after.aslApproved !== before.aslApproved) {
-      if (!ASL_ROLES.includes(user.role)) fieldErrors.aslApproved = "Only QC or admin can change ASL approval.";
+      if (!user.qcAuthorized) fieldErrors.aslApproved = `${QC_AUTH_REQUIRED} to change ASL approval.`;
       else if (!reason) fieldErrors.reason = "A reason is required when changing ASL approval.";
     }
     if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };

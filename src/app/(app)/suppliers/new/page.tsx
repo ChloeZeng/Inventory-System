@@ -10,7 +10,7 @@ export default async function NewSupplierPage() {
       <PageHeader title="New supplier" back={{ href: "/suppliers", label: "Suppliers" }} />
       <Card className="max-w-2xl">
         {user ? (
-          <SupplierForm action={createSupplier} canApprove={user.role === "qc" || user.role === "admin"} />
+          <SupplierForm action={createSupplier} canApprove={user.qcAuthorized} />
         ) : (
           <p className="text-sm text-amber-700">Pick a user in the top bar before creating suppliers.</p>
         )}

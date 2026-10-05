@@ -1,7 +1,11 @@
 // Allowed values for string "enum" columns in prisma/schema.prisma.
 
-export const ROLES = ["warehouse", "qc", "admin"] as const;
+// Every user can use every screen. "admin" only adds managing users (incl. the QC flag).
+// QC decisions are gated by User.qcAuthorized, not by role.
+export const ROLES = ["user", "admin"] as const;
 export type Role = (typeof ROLES)[number];
+
+export const QC_AUTH_REQUIRED = "Requires QC authorization";
 
 export const SUPPLIER_TYPES = [
   { value: "svlsg", label: "SVLSG supplier" },

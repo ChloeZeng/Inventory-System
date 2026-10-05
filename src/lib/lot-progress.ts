@@ -52,7 +52,7 @@ export function lotProgress(lot: {
   const receivingMissing = stageCounts(lot.summary, "at_receiving").open.filter((r) => r.status === "missing").length;
   if (receivingMissing) return build(0, "finish_receiving", `Finish receiving (${receivingMissing} missing)`);
   if (!lot.lastInspection) return build(2, "inspect", "Inspect (F.WD.003)");
-  if (lot.lastInspection.disposition !== "Approved") return build(3, "reject", "Inspection failed — QC to reject");
+  if (lot.lastInspection.disposition !== "Approved") return build(3, "reject", "Inspection failed — reject the lot (QC authorized)");
   const open = lot.summary.open.length;
   if (open) return build(3, "complete_missing", `Resolve ${plural(open, "open requirement")}, then release`);
   return build(3, "release", "Ready to release");

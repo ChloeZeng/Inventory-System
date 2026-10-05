@@ -11,10 +11,12 @@ const prisma = new PrismaClient();
 // ---------------------------------------------------------------------------
 // Users (demo only — replaced by Google Workspace login later)
 // ---------------------------------------------------------------------------
+// role: "user" or "admin" (admin manages users). qcAuthorized is set only when a user is
+// first created — after that it is managed on the Users page and audited.
 const USERS = [
-  { name: "Warehouse Demo", initials: "WH", role: "warehouse" },
-  { name: "QC Demo", initials: "QC", role: "qc" },
-  { name: "Admin Demo", initials: "AD", role: "admin" },
+  { name: "Warehouse Demo", initials: "WH", role: "user", qcAuthorized: false },
+  { name: "QC Demo", initials: "QC", role: "user", qcAuthorized: true },
+  { name: "Admin Demo", initials: "AD", role: "admin", qcAuthorized: false },
 ];
 
 // ---------------------------------------------------------------------------
@@ -189,7 +191,7 @@ function parseTable2A() {
 
 async function main() {
   for (const u of USERS) {
-    await prisma.user.upsert({ where: { initials: u.initials }, create: u, update: { name: u.name, role: u.role } });
+    await prisma.user.upsert({ where: { initials: u.initials }, create: u, update: { name: u.name } });
   }
 
   for (const loc of LOCATIONS) {
