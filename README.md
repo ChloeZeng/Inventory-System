@@ -54,7 +54,7 @@ src/app/(app)/         everything with the sidebar (layout.tsx):
   items/               items list / new / detail (with checklist)
   suppliers/           suppliers list / new / detail (with checklist and F.QC.009 / F.QC.015 documents)
   users/               users and QC authorization (admin)
-public/logo.svg        company logo (currently a placeholder — replace with the real file)
+public/logo.svg        company logo (sidebar, welcome screen; collapsed sidebar shows its left-hand mark)
 uploads/               uploaded files (git-ignored)
 ```
 
