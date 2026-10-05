@@ -201,7 +201,9 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
   const atReceiving = category ? evaluate("at_receiving", category.requirements.at_receiving, facts) : [];
   const beforeRelease = category ? evaluate("before_release", category.requirements.before_release, facts) : [];
   const blocking = atReceiving.filter((r) => r.status === "missing");
-  const later = beforeRelease.filter((r) => r.status === "missing");
+  // A legitimate "No" (e.g. a shortage) can be saved, but QC has to follow it up before release.
+  const followUps = atReceiving.filter((r) => r.status === "followup");
+  const later = beforeRelease.filter((r) => r.status !== "done" && r.status !== "na");
 
   function validate(key: StepKey): Record<string, string> {
     const e: Record<string, string> = {};
@@ -219,6 +221,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     }
     if (key === "delivery") {
       if (!d.dateReceived) e.dateReceived = "Enter the date received.";
+      else if (d.dateReceived > data.today) e.dateReceived = "The date received cannot be in the future.";
       if (!d.carrierInspection) e.carrierInspection = "Answer yes or no.";
     }
     if (key === "batch") {
@@ -728,6 +731,12 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
               onGo={(r) => goTo(steps.findIndex((s) => s.key === stepForRequirement(r.req)))}
             />
             <RequirementList
+              title="Will need QC follow-up — blocks release until resolved"
+              tone="amber"
+              rows={followUps}
+              onGo={(r) => goTo(steps.findIndex((s) => s.key === stepForRequirement(r.req)))}
+            />
+            <RequirementList
               title="Can be added later — these block release"
               tone="amber"
               rows={later}
@@ -855,9 +864,13 @@ function RequirementList({
       <ul className="space-y-1">
         {rows.map((r) => (
           <li key={r.req.key} className="flex flex-wrap items-center gap-2">
-            <span>• {r.req.label}</span>
+            <span>
+              • {r.req.label}
+              {r.detail && <span className="opacity-75"> — {r.detail}</span>}
+            </span>
             {r.req.ref && <span className="rounded bg-white/70 px-1.5 font-mono text-xs">{r.req.ref}</span>}
-            {r.req.source !== "inspection" && (
+            {r.status === "followup" && <span className="text-xs opacity-75">QC resolves this on the lot page</span>}
+            {r.req.source !== "inspection" && r.status !== "followup" && (
               <button type="button" onClick={() => onGo(r)} className="text-xs font-medium text-sky-700 underline">
                 Go fix
               </button>

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { QC_STATUSES } from "@/lib/constants";
 import { LOT_INCLUDE, lotLabel, lotStatus } from "@/lib/records";
 import { PageHeader, Table, buttonClass, formatDate, inputClass, secondaryButtonClass } from "@/components/ui";
-import { CompletionBar } from "@/components/progress";
+import { CompletionBar, openLabels } from "@/components/progress";
 import { QcStatusBadge } from "@/components/qc-status-badge";
 
 // Quick views used by the Home action buttons.
@@ -139,7 +139,7 @@ export default async function LotsPage({
             <td className="px-4 py-2">
               <CompletionBar summary={summary} compact />
               {!summary.complete && (
-                <div className="mt-1 max-w-56 text-xs text-slate-500">Missing: {summary.missing.map((r) => r.req.label).join(", ")}</div>
+                <div className="mt-1 max-w-56 text-xs text-slate-500">Open: {openLabels(summary)}</div>
               )}
             </td>
             <td className="px-4 py-2 text-slate-700">{progress.nextLabel}</td>

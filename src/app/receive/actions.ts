@@ -11,7 +11,7 @@ import { auditCreate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
 import { SEGREGATION, SUPPLIER_TYPES } from "@/lib/constants";
-import { type ActionState, dateOnly, decimal, errorMessage, int, str } from "@/lib/forms";
+import { type ActionState, dateOnly, decimal, errorMessage, int, str, toDateInput, todayDateInput } from "@/lib/forms";
 
 // Receiving wizard (spec §4.1). Creates, in one transaction:
 // the item (only if it is a new item type), the receipt (REC-YYYY-###) unless the lot
@@ -63,6 +63,8 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
 
     const dateReceived = existingReceipt?.dateReceived ?? dateOnly(formData, "dateReceived");
     if (!dateReceived) fieldErrors.dateReceived = "Enter the date received.";
+    else if (!existingReceipt && toDateInput(dateReceived) > todayDateInput())
+      fieldErrors.dateReceived = "The date received cannot be in the future.";
 
     const carrier = str(formData, "carrierInspection");
     const qtyMatches = str(formData, "qtyMatches");

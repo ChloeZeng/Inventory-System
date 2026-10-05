@@ -1,8 +1,8 @@
 import Link from "next/link";
 import type { CheckResult, CheckSummary } from "@/lib/completeness";
-import { STAGE_LABELS } from "@/lib/completeness";
+import { STAGE_LABELS, countResults } from "@/lib/completeness";
 import { LOT_STEPS, type StepState } from "@/lib/lot-progress";
-import { fixHref, type FixContext } from "@/lib/records";
+import { fixButtonLabel, fixHrefFor, type FixContext } from "@/lib/records";
 import { Badge } from "@/components/ui";
 
 // Receive → Quarantine → Inspect → Release → In use
@@ -25,7 +25,9 @@ export function Stepper({ states, captions }: { states: StepState[]; captions: (
               {s === "done" ? "✓ " : s === "failed" ? "✕ " : `${i + 1}. `}
               {label}
             </div>
-            {captions[i] && <div className={`mt-0.5 truncate ${s === "current" || s === "failed" ? "text-white/90" : "opacity-80"}`}>{captions[i]}</div>}
+            {captions[i] && (
+              <div className={`mt-0.5 truncate ${s === "current" || s === "failed" ? "text-white/90" : "opacity-80"}`}>{captions[i]}</div>
+            )}
           </li>
         );
       })}
@@ -55,6 +57,7 @@ export function CompletionBar({ summary, compact = false }: { summary: CheckSumm
 const STATUS = {
   done: { icon: "✓", label: "Done", cls: "text-emerald-700" },
   missing: { icon: "!", label: "Missing", cls: "text-red-700" },
+  followup: { icon: "?", label: "Needs follow-up", cls: "text-amber-700" },
   na: { icon: "–", label: "Not applicable", cls: "text-slate-400" },
 };
 
@@ -63,21 +66,24 @@ export function Checklist({ summary, ctx, canFix = true }: { summary: CheckSumma
   const groups = Map.groupBy(summary.results, (r) => r.stage);
   return (
     <div className="space-y-4">
-      {[...groups].map(([stage, rows]) => (
-        <div key={stage}>
-          <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-            {STAGE_LABELS[stage]}{" "}
-            <span className="font-normal normal-case tracking-normal">
-              · {rows.filter((r) => r.status === "done").length}/{rows.filter((r) => r.status !== "na").length}
-            </span>
-          </h3>
-          <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
-            {rows.map((r) => (
-              <ChecklistRow key={r.req.key} r={r} ctx={ctx} canFix={canFix} />
-            ))}
-          </ul>
-        </div>
-      ))}
+      {[...groups].map(([stage, rows]) => {
+        const counts = countResults(rows);
+        return (
+          <div key={stage}>
+            <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {STAGE_LABELS[stage]}{" "}
+              <span className="font-normal normal-case tracking-normal">
+                · {counts.met} of {counts.total} met
+              </span>
+            </h3>
+            <ul className="divide-y divide-slate-100 rounded-md border border-slate-200">
+              {rows.map((r) => (
+                <ChecklistRow key={r.req.key} r={r} ctx={ctx} canFix={canFix} />
+              ))}
+            </ul>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -85,7 +91,11 @@ export function Checklist({ summary, ctx, canFix = true }: { summary: CheckSumma
 function ChecklistRow({ r, ctx, canFix }: { r: CheckResult; ctx: FixContext; canFix: boolean }) {
   const st = STATUS[r.status];
   return (
-    <li className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm ${r.status === "missing" ? "bg-red-50/40" : ""}`}>
+    <li
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm ${
+        r.status === "missing" ? "bg-red-50/40" : r.status === "followup" ? "bg-amber-50/60" : ""
+      }`}
+    >
       <span className={`w-5 text-center font-bold ${st.cls}`} aria-hidden>
         {st.icon}
       </span>
@@ -94,11 +104,14 @@ function ChecklistRow({ r, ctx, canFix }: { r: CheckResult; ctx: FixContext; can
         {r.detail && <span className="text-slate-500"> — {r.detail}</span>}
       </span>
       {r.req.ref && <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-600">{r.req.ref}</span>}
-      <span className={`w-24 text-xs ${st.cls}`}>{st.label}</span>
-      <span className="w-12 text-right">
-        {r.status === "missing" && canFix && (
-          <Link href={fixHref(r.req, ctx)} className="rounded border border-sky-600 px-2 py-0.5 text-xs font-medium text-sky-700 hover:bg-sky-50">
-            Fix
+      <span className={`w-28 text-xs ${st.cls}`}>{st.label}</span>
+      <span className="w-16 text-right">
+        {(r.status === "missing" || r.status === "followup") && canFix && (
+          <Link
+            href={fixHrefFor(r, ctx)}
+            className="rounded border border-sky-600 px-2 py-0.5 text-xs font-medium text-sky-700 hover:bg-sky-50"
+          >
+            {fixButtonLabel(r)}
           </Link>
         )}
       </span>
@@ -109,9 +122,10 @@ function ChecklistRow({ r, ctx, canFix }: { r: CheckResult; ctx: FixContext; can
 // "Missing before release: Invoice no., Spec sheet, F.WD.003 inspection."
 export function MissingSummary({ summary }: { summary: CheckSummary }) {
   if (summary.complete) return <span className="text-emerald-700">Nothing missing</span>;
-  return (
-    <span className="text-slate-600">
-      Missing: {summary.missing.map((r) => r.req.label).join(", ")}
-    </span>
-  );
+  return <span className="text-slate-600">Open: {openLabels(summary)}</span>;
+}
+
+// "PO / invoice no., Total matches packing list / PO (follow-up)"
+export function openLabels(summary: CheckSummary) {
+  return summary.open.map((r) => (r.status === "followup" ? `${r.req.label} (follow-up)` : r.req.label)).join(", ");
 }

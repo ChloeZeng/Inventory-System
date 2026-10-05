@@ -3,11 +3,12 @@
 
 import { prisma } from "./prisma";
 import type { Role } from "./constants";
-import { ownerOf } from "./completeness";
+import { ownerOf, ownerOfOpen } from "./completeness";
 import { loadAnsiTables, samplingPlan } from "./sampling";
 import {
   LOT_INCLUDE,
   fixHref,
+  fixHrefFor,
   fixVerb,
   isReceiptLevel,
   itemChecklist,
@@ -83,16 +84,19 @@ export async function loadTodos(): Promise<Todo[]> {
     if (progress.next === "reject")
       qcActions.push({ key: `reject-${lot.id}`, title: `Reject lot ${label} — inspection failed`, context, href: `/lots/${lot.id}#release`, owner: "qc", kind: "reject" });
 
-    for (const r of summary.missing) {
+    for (const r of summary.open) {
       // inspections are listed above; item paperwork is listed once per item below
       if (r.req.source === "inspection" || r.req.attachedTo === "item") continue;
       const subject = isReceiptLevel(r) ? lot.receipt.receivingNo : `lot ${label}`;
       lotMissing.push({
         key: `lot-${lot.id}-${r.req.key}`,
-        title: `${fixVerb(r.req)} ${lcFirst(r.req.label)} for ${subject}`,
+        title:
+          r.status === "followup"
+            ? `Resolve “${r.req.label}” for ${subject}${r.detail ? ` (${r.detail})` : ""}`
+            : `${fixVerb(r.req)} ${lcFirst(r.req.label)} for ${subject}`,
         context,
-        href: fixHref(r.req, { lotId: lot.id }),
-        owner: ownerOf(r.req),
+        href: fixHrefFor(r, { lotId: lot.id }),
+        owner: ownerOfOpen(r),
         ref: r.req.ref,
         kind: "missing",
       });
@@ -101,8 +105,8 @@ export async function loadTodos(): Promise<Todo[]> {
 
   const itemTodos: Todo[] = [];
   for (const item of items) {
-    const { missing } = itemChecklist(item);
-    const byOwner = Map.groupBy(missing, (r) => ownerOf(r.req));
+    const { open } = itemChecklist(item);
+    const byOwner = Map.groupBy(open, (r) => ownerOf(r.req));
     for (const [owner, rows] of byOwner) {
       const blocking = item._count.lots ? ` · blocks release of ${item._count.lots} lot${item._count.lots > 1 ? "s" : ""}` : "";
       itemTodos.push({
@@ -122,7 +126,7 @@ export async function loadTodos(): Promise<Todo[]> {
 
   const supplierTodos: Todo[] = [];
   for (const s of suppliers) {
-    const { missing } = supplierChecklist(s);
+    const { open: missing } = supplierChecklist(s);
     if (!missing.length) continue;
     supplierTodos.push({
       key: `supplier-${s.id}`,

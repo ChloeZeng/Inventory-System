@@ -18,8 +18,20 @@ export type Requirement = {
   source: "field" | "document" | "inspection";
   // for source=field: "receipt.poInvoiceNo", "lot.unitCost", "item.specs.size", "supplier.aslApproved"
   path?: string;
-  // for source=field on a yes/no field: only "yes" counts as done (e.g. quarantine sticker applied)
-  requireTrue?: boolean;
+  // for source=field: what counts as a correct answer (not just a filled-in one).
+  //   "yes"      — a yes/no field must be Yes. The default for yes/no fields.
+  //   "answered" — any answer counts, including No.
+  //   "filled"   — any non-blank value; numbers must be above 0. The default for other fields.
+  expect?: "yes" | "answered" | "filled";
+  // for source=field: a calendar date that cannot be later than today (e.g. date received)
+  notInFuture?: boolean;
+  // for a yes/no field: a "No" is a legitimate answer that still needs follow-up
+  // (e.g. a shortage against the packing list) until someone authorized resolves it.
+  followUp?: {
+    note?: string; // path of the explanation shown on the line, e.g. "receipt.qtyMatchNote"
+    resolvedBy?: string; // path that, once filled, closes the follow-up, e.g. "receipt.qtyDiffResolution"
+    owner?: "warehouse" | "qc" | "admin"; // who may resolve it
+  };
   // for source=document: document type and what it is attached to
   documentType?: string;
   attachedTo?: "item" | "receipt" | "lot" | "supplier";

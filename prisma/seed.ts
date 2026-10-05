@@ -40,16 +40,25 @@ const LIDS_CONFIG: CategoryConfig = {
   requirements: {
     at_receiving: [
       { key: "supplier", label: "Supplier", source: "field", path: "receipt.supplierId", ref: "Receiving log" },
-      { key: "dateReceived", label: "Date received", source: "field", path: "receipt.dateReceived", ref: "Receiving log" },
-      { key: "carrierInspection", label: "Truck inspection done", source: "field", path: "receipt.carrierInspectionDone", requireTrue: true, ref: "F.WD.001" },
+      { key: "dateReceived", label: "Date received", source: "field", path: "receipt.dateReceived", notInFuture: true, ref: "Receiving log" },
+      { key: "carrierInspection", label: "Truck inspection done", source: "field", path: "receipt.carrierInspectionDone", expect: "yes", ref: "F.WD.001" },
       { key: "batchOrLotNo", label: "Supplier batch no. or lot no.", source: "field", anyOf: ["lot.supplierBatchNo", "lot.lotNo"], ref: "Receiving log" },
       { key: "cases", label: "Number of cases", source: "field", path: "lot.cases", ref: "Receiving log" },
       { key: "unitsPerCase", label: "Units per case", source: "field", path: "lot.unitsPerCase", ref: "Receiving log" },
-      { key: "qtyMatch", label: "Total checked against packing list / PO", source: "field", path: "receipt.qtyMatchesPackingList", ref: "Receiving log" },
+      // "No" is a legitimate answer (a shortage), but it needs QC follow-up before release.
+      {
+        key: "qtyMatch",
+        label: "Total matches packing list / PO",
+        source: "field",
+        path: "receipt.qtyMatchesPackingList",
+        expect: "yes",
+        followUp: { note: "receipt.qtyMatchNote", resolvedBy: "receipt.qtyDiffResolution", owner: "qc" },
+        ref: "Receiving log",
+      },
       { key: "segregation", label: "Special segregation", source: "field", path: "receipt.segregation", ref: "Receiving log" },
       { key: "location", label: "Location", source: "field", path: "lot.locationId", ref: "Receiving log" },
       { key: "boxLabelPhoto", label: "Photo of box label", source: "document", documentType: "Photo", attachedTo: "lot", ref: "Receiving log" },
-      { key: "quarantineSticker", label: "Quarantine sticker on every box", source: "field", path: "receipt.quarantineStickerApplied", requireTrue: true, ref: "21 CFR 111" },
+      { key: "quarantineSticker", label: "Quarantine sticker on every box", source: "field", path: "receipt.quarantineStickerApplied", expect: "yes", ref: "21 CFR 111" },
     ],
     before_release: [
       { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item", ref: "21 CFR 111" },

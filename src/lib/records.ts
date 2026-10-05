@@ -104,11 +104,25 @@ export function fixHref(req: Requirement, ctx: FixContext): string {
   return `/lots/${ctx.lotId}#field-${field}`;
 }
 
+// Where the button on an open checklist line goes: a follow-up goes to its
+// resolution (or release) section, anything else to the field / upload.
+export function fixHrefFor(r: CheckResult, ctx: FixContext): string {
+  if (r.status === "followup") {
+    if (r.req.source === "inspection") return `/lots/${ctx.lotId}#release`;
+    if (r.req.followUp) return `/lots/${ctx.lotId}#followup-${r.req.key}`;
+  }
+  return fixHref(r.req, ctx);
+}
+
+export function fixButtonLabel(r: CheckResult) {
+  return r.status === "followup" ? "Resolve" : "Fix";
+}
+
 // "Upload Packing list / COA", "Enter Unit cost", "Confirm Quarantine sticker on every box"
 export function fixVerb(req: Requirement) {
   if (req.source === "document") return "Upload";
   if (req.source === "inspection") return "Inspect";
-  if (req.requireTrue) return "Confirm";
+  if (req.expect === "yes") return "Confirm";
   return "Enter";
 }
 

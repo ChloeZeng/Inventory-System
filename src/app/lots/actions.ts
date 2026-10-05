@@ -85,16 +85,25 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
       fieldErrors.reason = `You changed a value that was already recorded (${corrected.map((k) => LABELS[k] ?? k).join(", ")}) — give a reason.`;
     if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
 
+    // A QC sign-off covers one specific answer and note. If either changes, it no longer applies.
+    const qtyDiffChanged =
+      !same(receiptBefore.qtyMatchesPackingList, receiptAfter.qtyMatchesPackingList) ||
+      !same(receiptBefore.qtyMatchNote, receiptAfter.qtyMatchNote);
+    const receiptData =
+      qtyDiffChanged && receiptBefore.qtyDiffResolution
+        ? { ...receiptAfter, qtyDiffResolution: null, qtyDiffResolvedById: null, qtyDiffResolvedAt: null }
+        : receiptAfter;
+
     const changed = await prisma.$transaction(async (tx) => {
       const r = await auditUpdate(tx, {
         userId: user.id,
         table: "Receipt",
         recordId: lot.receiptId,
         before: receiptBefore,
-        after: receiptAfter,
+        after: receiptData,
         reason: reason ?? undefined,
       });
-      if (r) await tx.receipt.update({ where: { id: lot.receiptId }, data: receiptAfter });
+      if (r) await tx.receipt.update({ where: { id: lot.receiptId }, data: receiptData });
       const l = await auditUpdate(tx, {
         userId: user.id,
         table: "Lot",
@@ -108,6 +117,40 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
     });
     revalidatePath("/", "layout");
     return { ok: changed ? `Saved ${changed} change${changed > 1 ? "s" : ""}.` : "No changes." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// Only QC (or admin) may accept a total that does not match the packing list / PO.
+const QC_ROLES = ["qc", "admin"];
+
+export async function resolveQtyDifference(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireUser();
+    if (!QC_ROLES.includes(user.role)) return { error: "Only QC can resolve a quantity difference." };
+    const lot = await prisma.lot.findUniqueOrThrow({ where: { id: lotId }, include: { receipt: true } });
+    if (lot.receipt.qtyMatchesPackingList !== false)
+      return { error: "Nothing to resolve: the total is not recorded as different from the packing list / PO." };
+    if (lot.receipt.qtyDiffResolution) return { error: "This difference is already resolved." };
+    const resolution = str(formData, "resolution");
+    if (!resolution)
+      return { error: "Write how the difference was resolved.", fieldErrors: { resolution: "Required — e.g. supplier credit note, PO adjusted." } };
+
+    const after = { qtyDiffResolution: resolution, qtyDiffResolvedById: user.id, qtyDiffResolvedAt: new Date() };
+    await prisma.$transaction(async (tx) => {
+      await auditUpdate(tx, {
+        userId: user.id,
+        table: "Receipt",
+        recordId: lot.receiptId,
+        before: lot.receipt,
+        after,
+        reason: "Quantity difference resolved by QC",
+      });
+      await tx.receipt.update({ where: { id: lot.receiptId }, data: after });
+    });
+    revalidatePath("/", "layout");
+    return { ok: "Difference resolved." };
   } catch (e) {
     return { error: errorMessage(e) };
   }

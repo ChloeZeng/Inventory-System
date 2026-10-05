@@ -5,7 +5,8 @@ import { getCurrentUser } from "@/lib/current-user";
 import { parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
 import { LOT_DOCUMENT_TYPES, segregationLabel, supplierTypeLabel, transactionTypeLabel } from "@/lib/constants";
 import { toDateInput } from "@/lib/forms";
-import { LOT_INCLUDE, fixHref, lotLabel, lotStatus } from "@/lib/records";
+import { LOT_INCLUDE, fixButtonLabel, fixHrefFor, lotLabel, lotStatus } from "@/lib/records";
+import { STAGE_LABELS, releaseReadiness } from "@/lib/completeness";
 import { loadAnsiTables, samplingPlan } from "@/lib/sampling";
 import {
   Badge,
@@ -23,7 +24,8 @@ import { UploadForm } from "@/components/upload-form";
 import { AuditHistory } from "@/components/audit-history";
 import { QcStatusBadge } from "@/components/qc-status-badge";
 import { LotDetailsForm } from "../lot-details-form";
-import { updateLotDetails, uploadLotDocument } from "../actions";
+import { resolveQtyDifference, updateLotDetails, uploadLotDocument } from "../actions";
+import { ResolveForm } from "../resolve-form";
 
 export default async function LotDetailPage({
   params,
@@ -46,7 +48,7 @@ export default async function LotDetailPage({
       include: {
         operator: true,
         releasedBy: true,
-        receipt: { include: { receivedBy: true, documents: { include: { uploadedBy: true } }, lots: { include: { item: true } } } },
+        receipt: { include: { receivedBy: true, qtyDiffResolvedBy: true, documents: { include: { uploadedBy: true } }, lots: { include: { item: true } } } },
         documents: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
         item: { include: { documents: { where: { type: "Spec sheet" }, include: { uploadedBy: true } } } },
         inspections: { include: { inspectedBy: true }, orderBy: { inspectedAt: "desc" } },
@@ -62,7 +64,11 @@ export default async function LotDetailPage({
   const label = lotLabel(lot);
   const ctx = { lotId: lot.id, itemId: lot.itemId, supplierId: lot.receipt.supplierId };
   const unitCost = lot.unitCost ? Number(lot.unitCost) : null;
-  const firstMissing = summary.missing.find((r) => r.req.source !== "inspection");
+  const firstOpen = summary.open.find((r) => r.req.source !== "inspection");
+  const release = releaseReadiness(summary);
+  const isQc = user?.role === "qc" || user?.role === "admin";
+  // the packing-list / PO check, when its follow-up is resolved on this page
+  const qtyCheck = summary.results.find((r) => r.req.followUp?.resolvedBy === "receipt.qtyDiffResolution");
   let plan: ReturnType<typeof samplingPlan> | null = null;
   let planError: string | null = null;
   try {
@@ -96,7 +102,7 @@ export default async function LotDetailPage({
           </p>
           <p className="mt-1 text-sm text-emerald-900">
             Next: {progress.nextLabel}
-            {summary.missing.length > 0 && ` · ${summary.missing.length} requirement${summary.missing.length > 1 ? "s" : ""} still open (see the checklist below).`}
+            {summary.open.length > 0 && ` · ${summary.open.length} requirement${summary.open.length > 1 ? "s" : ""} still open (see the checklist below).`}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Link href={`/receive?receipt=${lot.receiptId}`} className={buttonClass}>
@@ -146,6 +152,31 @@ export default async function LotDetailPage({
             <CompletionBar summary={summary} />
           </div>
           <Checklist summary={summary} ctx={ctx} canFix={!!user} />
+
+          {qtyCheck && lot.receipt.qtyMatchesPackingList === false && (
+            <div
+              id={`followup-${qtyCheck.req.key}`}
+              className={`mt-5 rounded-md border px-4 py-3 text-sm ${qtyCheck.status === "followup" ? "border-amber-300 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}
+            >
+              <p className="font-medium">Total does not match the packing list / PO</p>
+              <p className="mt-1">
+                <span className="text-slate-600">Receiving note:</span> {lot.receipt.qtyMatchNote ?? "(no note)"}
+              </p>
+              {lot.receipt.qtyDiffResolution ? (
+                <p className="mt-1">
+                  <span className="text-slate-600">Resolved by {details.receipt.qtyDiffResolvedBy?.name ?? "—"}
+                  {lot.receipt.qtyDiffResolvedAt && ` on ${formatDateTime(lot.receipt.qtyDiffResolvedAt)}`}:</span>{" "}
+                  {lot.receipt.qtyDiffResolution}
+                </p>
+              ) : isQc ? (
+                <div className="mt-3">
+                  <ResolveForm action={resolveQtyDifference.bind(null, lot.id)} placeholder="e.g. Supplier credit note CN-123 for 1 short case; PO adjusted" />
+                </div>
+              ) : (
+                <p className="mt-1 text-amber-900">Needs follow-up by QC before the lot can be released.</p>
+              )}
+            </div>
+          )}
         </Card>
 
         <div className="space-y-6">
@@ -154,8 +185,8 @@ export default async function LotDetailPage({
             <NextStep
               next={progress.next}
               role={user?.role}
-              fixLink={firstMissing ? fixHref(firstMissing.req, ctx) : null}
-              fixLabel={firstMissing?.req.label}
+              fixLink={firstOpen ? fixHrefFor(firstOpen, ctx) : null}
+              fixLabel={firstOpen ? `${fixButtonLabel(firstOpen)}: ${firstOpen.req.label}` : undefined}
               sampleSize={plan?.sampleSize}
             />
           </Card>
@@ -196,7 +227,11 @@ export default async function LotDetailPage({
             <Row label="Received by">{details.receipt.receivedBy.name}</Row>
             <Row label="Truck inspected">{lot.receipt.carrierInspectionDone ? "Yes (F.WD.001)" : "No"}</Row>
             <Row label="Matches packing list">
-              {lot.receipt.qtyMatchesPackingList === null ? "—" : lot.receipt.qtyMatchesPackingList ? "Yes" : `No — ${lot.receipt.qtyMatchNote ?? ""}`}
+              {lot.receipt.qtyMatchesPackingList === null
+                ? "—"
+                : lot.receipt.qtyMatchesPackingList
+                  ? "Yes"
+                  : `No — ${lot.receipt.qtyMatchNote ?? ""}${lot.receipt.qtyDiffResolution ? " (resolved)" : " (needs follow-up)"}`}
             </Row>
           </dl>
           {otherLots.length > 0 && (
@@ -350,14 +385,38 @@ export default async function LotDetailPage({
             <p className="text-sm text-red-700">Rejected — this lot cannot be used.</p>
           ) : (
             <>
-              <ul className="space-y-1 text-sm">
-                <li>{lastInspection?.disposition === "Approved" ? "✓" : "✕"} Inspection approved (F.WD.003)</li>
-                <li>
-                  {progress.missingBeforeRelease === 0 ? "✓" : "✕"} All before-release requirements met
-                  {progress.missingBeforeRelease > 0 && ` (${progress.missingBeforeRelease} missing)`}
-                </li>
-                <li>✕ Release sticker placed over the quarantine sticker</li>
+              {/* Same numbers as the Requirements checklist: both come from countResults. */}
+              <p className="text-sm font-medium">
+                {release.ready ? "✓ All requirements met" : `✕ ${release.met} of ${release.total} requirements met`}
+              </p>
+              <ul className="mt-1 space-y-0.5 text-sm text-slate-600">
+                {release.stages.map((st) => (
+                  <li key={st.stage}>
+                    {st.complete ? "✓" : "✕"} {STAGE_LABELS[st.stage]}: {st.met} of {st.total} met
+                  </li>
+                ))}
               </ul>
+              {release.open.length > 0 && (
+                <ul className="mt-3 space-y-1 text-sm">
+                  {release.open.map((r) => (
+                    <li key={r.req.key} className="flex flex-wrap items-center gap-2">
+                      <span className={r.status === "followup" ? "text-amber-700" : "text-red-700"}>
+                        {r.status === "followup" ? "Needs follow-up:" : "Missing:"}
+                      </span>
+                      <span>
+                        {r.req.label}
+                        {r.detail && <span className="text-slate-500"> — {r.detail}</span>}
+                      </span>
+                      {user && (
+                        <Link href={fixHrefFor(r, ctx)} className="text-xs font-medium text-sky-700 hover:underline">
+                          {fixButtonLabel(r)}
+                        </Link>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-3 text-sm text-slate-600">At release QC also confirms the release sticker is placed over the quarantine sticker.</p>
               <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
                 Only QC can release. The release sign-off arrives in build step 6.
               </p>
@@ -435,7 +494,7 @@ function NextStep({
     case "complete_missing":
       return fixLink ? (
         <Link href={fixLink} className={`${buttonClass} mt-3`}>
-          Fix: {fixLabel}
+          {fixLabel}
         </Link>
       ) : null;
     case "inspect":

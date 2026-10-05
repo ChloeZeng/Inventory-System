@@ -25,6 +25,7 @@ model User {
   createdAt DateTime @default(now())
 
   receiptsReceived Receipt[]              @relation("ReceiptReceivedBy")
+  qtyDiffsResolved Receipt[]              @relation("ReceiptQtyDiffResolvedBy")
   lotsOperated     Lot[]                  @relation("LotOperator")
   lotsReleased     Lot[]                  @relation("LotReleasedBy")
   documents        Document[]
@@ -109,6 +110,11 @@ model Receipt {
   dockStatus               String     @default("received") // received | rejected
   qtyMatchesPackingList    Boolean?
   qtyMatchNote             String?
+  // QC sign-off on a total that does not match the packing list / PO
+  qtyDiffResolution        String?
+  qtyDiffResolvedById      Int?
+  qtyDiffResolvedBy        User?      @relation("ReceiptQtyDiffResolvedBy", fields: [qtyDiffResolvedById], references: [id])
+  qtyDiffResolvedAt        DateTime?
   quarantineStickerApplied Boolean    @default(false)
   receivedById             Int
   receivedBy               User       @relation("ReceiptReceivedBy", fields: [receivedById], references: [id])

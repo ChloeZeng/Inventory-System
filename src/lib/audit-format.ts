@@ -35,6 +35,9 @@ const FIELD_LABELS: Record<string, string> = {
   dockStatus: "Dock status",
   qtyMatchesPackingList: "Total matches packing list / PO",
   qtyMatchNote: "Packing list / PO note",
+  qtyDiffResolution: "Quantity difference resolution",
+  qtyDiffResolvedById: "Difference resolved by",
+  qtyDiffResolvedAt: "Difference resolved at",
   quarantineStickerApplied: "Quarantine sticker on every box",
   receivedById: "Received by",
   // lot
@@ -74,7 +77,7 @@ const TABLE_LABELS: Record<string, string> = {
   InventoryTransaction: "Inventory transaction",
 };
 
-const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById"];
+const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById"];
 
 function humanize(field: string) {
   const s = field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
