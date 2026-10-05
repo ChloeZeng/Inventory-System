@@ -17,17 +17,23 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  name      String
-  initials  String   @unique
-  role      String // warehouse | qc | admin
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id              Int       @id @default(autoincrement())
+  name            String
+  initials        String    @unique
+  role            String // user | admin (admin manages users; it does not grant QC authority)
+  // QC authorized: may set an inspection disposition, release or reject a lot,
+  // resolve QC follow-ups and change ASL approval. Changes are audited.
+  qcAuthorized    Boolean   @default(false)
+  // onboarding tour on Home finished or skipped (UI preference, not audited)
+  tourCompletedAt DateTime?
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
 
   receiptsReceived Receipt[]              @relation("ReceiptReceivedBy")
   qtyDiffsResolved Receipt[]              @relation("ReceiptQtyDiffResolvedBy")
   lotsOperated     Lot[]                  @relation("LotOperator")
   lotsReleased     Lot[]                  @relation("LotReleasedBy")
+  lotsRejected     Lot[]                  @relation("LotRejectedBy")
   documents        Document[]
   inspections      Inspection[]
   transactions     InventoryTransaction[]
@@ -146,6 +152,10 @@ model Lot {
   releasedAt           DateTime?
   releasedById         Int?
   releasedBy           User?                  @relation("LotReleasedBy", fields: [releasedById], references: [id])
+  rejectedAt           DateTime?
+  rejectedById         Int?
+  rejectedBy           User?                  @relation("LotRejectedBy", fields: [rejectedById], references: [id])
+  rejectionReason      String?
   operatorId           Int
   operator             User                   @relation("LotOperator", fields: [operatorId], references: [id])
   createdAt            DateTime               @default(now())

@@ -24,8 +24,10 @@ import { UploadForm } from "@/components/upload-form";
 import { AuditHistory } from "@/components/audit-history";
 import { QcStatusBadge } from "@/components/qc-status-badge";
 import { LotDetailsForm } from "../lot-details-form";
-import { resolveQtyDifference, updateLotDetails, uploadLotDocument } from "../actions";
+import { rejectLot, releaseLot, resolveQtyDifference, updateLotDetails, uploadLotDocument } from "../actions";
 import { ResolveForm } from "../resolve-form";
+import { RejectForm, ReleaseForm } from "../qc-decision-forms";
+import { QcGate } from "@/components/qc-gate";
 
 export default async function LotDetailPage({
   params,
@@ -48,6 +50,7 @@ export default async function LotDetailPage({
       include: {
         operator: true,
         releasedBy: true,
+        rejectedBy: true,
         receipt: { include: { receivedBy: true, qtyDiffResolvedBy: true, documents: { include: { uploadedBy: true } }, lots: { include: { item: true } } } },
         documents: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
         item: { include: { documents: { where: { type: "Spec sheet" }, include: { uploadedBy: true } } } },
@@ -66,7 +69,8 @@ export default async function LotDetailPage({
   const unitCost = lot.unitCost ? Number(lot.unitCost) : null;
   const firstOpen = summary.open.find((r) => r.req.source !== "inspection");
   const release = releaseReadiness(summary);
-  const isQc = user?.role === "qc" || user?.role === "admin";
+  // QC decisions (disposition, release, reject, resolving QC follow-ups) need QC authorization.
+  const isQc = !!user?.qcAuthorized;
   // the packing-list / PO check, when its follow-up is resolved on this page
   const qtyCheck = summary.results.find((r) => r.req.followUp?.resolvedBy === "receipt.qtyDiffResolution");
   let plan: ReturnType<typeof samplingPlan> | null = null;
@@ -168,12 +172,13 @@ export default async function LotDetailPage({
                   {lot.receipt.qtyDiffResolvedAt && ` on ${formatDateTime(lot.receipt.qtyDiffResolvedAt)}`}:</span>{" "}
                   {lot.receipt.qtyDiffResolution}
                 </p>
-              ) : isQc ? (
-                <div className="mt-3">
-                  <ResolveForm action={resolveQtyDifference.bind(null, lot.id)} placeholder="e.g. Supplier credit note CN-123 for 1 short case; PO adjusted" />
-                </div>
               ) : (
-                <p className="mt-1 text-amber-900">Needs follow-up by QC before the lot can be released.</p>
+                <div className="mt-3">
+                  {!isQc && <p className="mb-2 text-amber-900">Needs follow-up by a QC-authorized user before the lot can be released.</p>}
+                  <QcGate authorized={isQc} label="Mark as resolved">
+                    <ResolveForm action={resolveQtyDifference.bind(null, lot.id)} placeholder="e.g. Supplier credit note CN-123 for 1 short case; PO adjusted" />
+                  </QcGate>
+                </div>
               )}
             </div>
           )}
@@ -184,7 +189,7 @@ export default async function LotDetailPage({
             <p className="text-lg font-medium">{progress.nextLabel}</p>
             <NextStep
               next={progress.next}
-              role={user?.role}
+              qcAuthorized={isQc}
               fixLink={firstOpen ? fixHrefFor(firstOpen, ctx) : null}
               fixLabel={firstOpen ? `${fixButtonLabel(firstOpen)}: ${firstOpen.req.label}` : undefined}
               sampleSize={plan?.sampleSize}
@@ -371,8 +376,20 @@ export default async function LotDetailPage({
             </ul>
           ) : (
             <p className="mt-4 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-              Not inspected yet. The guided F.WD.003 inspection form arrives in build step 5.
+              Not inspected yet. Anyone can draw and count the samples; setting the disposition needs QC authorization.
             </p>
+          )}
+          {lot.qcStatus === "Quarantine" && (
+            <div className="mt-4">
+              <QcGate authorized={isQc} label="Set disposition (F.WD.003)">
+                <div className="inline-flex flex-col items-start gap-1">
+                  <button type="button" disabled className={`${buttonClass} cursor-not-allowed`}>
+                    Set disposition (F.WD.003)
+                  </button>
+                  <p className="text-xs text-slate-500">The guided F.WD.003 inspection form arrives in build step 5.</p>
+                </div>
+              </QcGate>
+            </div>
           )}
         </Card>
 
@@ -382,7 +399,14 @@ export default async function LotDetailPage({
               Released by {details.releasedBy?.name ?? "—"} on {formatDateTime(lot.releasedAt ?? lot.createdAt)}.
             </p>
           ) : lot.qcStatus === "Rejected" ? (
-            <p className="text-sm text-red-700">Rejected — this lot cannot be used.</p>
+            <div className="text-sm">
+              <p className="font-medium text-red-700">Rejected — this lot cannot be used.</p>
+              <p className="mt-1 text-slate-600">
+                By {details.rejectedBy?.name ?? "—"}
+                {lot.rejectedAt && ` on ${formatDateTime(lot.rejectedAt)}`}
+                {lot.rejectionReason && `: ${lot.rejectionReason}`}
+              </p>
+            </div>
           ) : (
             <>
               {/* Same numbers as the Requirements checklist: both come from countResults. */}
@@ -416,10 +440,24 @@ export default async function LotDetailPage({
                   ))}
                 </ul>
               )}
-              <p className="mt-3 text-sm text-slate-600">At release QC also confirms the release sticker is placed over the quarantine sticker.</p>
-              <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                Only QC can release. The release sign-off arrives in build step 6.
-              </p>
+              <div className="mt-5 grid gap-6 border-t border-slate-100 pt-4 sm:grid-cols-2">
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold">Release</h3>
+                  <QcGate authorized={isQc} label="Release lot">
+                    <ReleaseForm action={releaseLot.bind(null, lot.id)} lotLabel={label} ready={release.ready} />
+                  </QcGate>
+                </div>
+                <div>
+                  <h3 className="mb-2 text-sm font-semibold">Reject</h3>
+                  <QcGate
+                    authorized={isQc}
+                    label="Reject lot"
+                    className={`${secondaryButtonClass} border-red-300 text-red-700`}
+                  >
+                    <RejectForm action={rejectLot.bind(null, lot.id)} lotLabel={label} />
+                  </QcGate>
+                </div>
+              </div>
             </>
           )}
         </Card>
@@ -477,18 +515,18 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 function NextStep({
   next,
-  role,
+  qcAuthorized,
   fixLink,
   fixLabel,
   sampleSize,
 }: {
   next: string;
-  role?: string;
+  qcAuthorized: boolean;
   fixLink: string | null;
   fixLabel?: string;
   sampleSize?: number;
 }) {
-  const isQc = role === "qc" || role === "admin";
+  const isQc = qcAuthorized;
   switch (next) {
     case "finish_receiving":
     case "complete_missing":
@@ -500,7 +538,7 @@ function NextStep({
     case "inspect":
       return (
         <p className="mt-2 text-sm text-slate-600">
-          {isQc ? "You" : "QC"} {isQc ? "need" : "needs"} to inspect this lot
+          Inspect this lot{isQc ? "" : " (the disposition is set by a QC-authorized user)"}
           {sampleSize ? ` — draw ${sampleSize.toLocaleString()} samples` : ""}.{" "}
           <Link href="#inspection" className="text-sky-700 hover:underline">
             See the sampling plan
@@ -511,7 +549,7 @@ function NextStep({
     case "reject":
       return (
         <p className="mt-2 text-sm text-slate-600">
-          {isQc ? "You can" : "QC can"} {next === "release" ? "release" : "reject"} this lot.{" "}
+          {isQc ? "You can" : "A QC-authorized user can"} {next === "release" ? "release" : "reject"} this lot.{" "}
           <Link href="#release" className="text-sky-700 hover:underline">
             Go to release
           </Link>

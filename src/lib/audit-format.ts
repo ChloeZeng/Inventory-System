@@ -57,6 +57,12 @@ const FIELD_LABELS: Record<string, string> = {
   releaseStickerPlaced: "Release sticker placed",
   releasedAt: "Released at",
   releasedById: "Released by",
+  rejectedAt: "Rejected at",
+  rejectedById: "Rejected by",
+  rejectionReason: "Rejection reason",
+  qcAuthorized: "QC authorized",
+  role: "Role",
+  initials: "Initials",
   operatorId: "Operator",
   // document
   lotId: "Lot",
@@ -77,7 +83,9 @@ const TABLE_LABELS: Record<string, string> = {
   InventoryTransaction: "Inventory transaction",
 };
 
-const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById"];
+const ROLE_LABELS: Record<string, string> = { user: "User", admin: "Admin", warehouse: "Warehouse (removed role)", qc: "QC (removed role)" };
+
+const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById"];
 
 function humanize(field: string) {
   const s = field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
@@ -107,7 +115,7 @@ async function nameMaps(rows: AuditLog[]) {
       prisma.lot.findMany({ where: { id: { in: lotIds } } }),
       prisma.location.findMany({ where: { id: { in: ids(rows, ["locationId"]) } } }),
       prisma.room.findMany({ where: { id: { in: ids(rows, ["roomId"]) } }, include: { location: true } }),
-      prisma.user.findMany({ where: { id: { in: ids(rows, USER_FIELDS) } } }),
+      prisma.user.findMany({ where: { id: { in: [...ids(rows, USER_FIELDS), ...recordIds(rows, "User")] } } }),
       prisma.document.findMany({ where: { id: { in: recordIds(rows, "Document") } } }),
       prisma.inventoryTransaction.findMany({ where: { id: { in: recordIds(rows, "InventoryTransaction") } } }),
       prisma.category.findMany({ select: { config: true } }),
@@ -129,6 +137,7 @@ async function nameMaps(rows: AuditLog[]) {
   const records: Record<string, Map<number, string>> = {
     Item: new Map(items.map((i) => [i.id, `${i.code} ${i.name}`])),
     Supplier: new Map(suppliers.map((s) => [s.id, s.name])),
+    User: new Map(users.map((u) => [u.id, `${u.name} (${u.initials})`])),
     Receipt: new Map(receipts.map((r) => [r.id, r.receivingNo])),
     Lot: new Map(lots.map((l) => [l.id, lotName(l)])),
     Document: new Map(documents.map((d) => [d.id, `${d.type} — ${d.fileName}`])),
@@ -169,6 +178,7 @@ function formatValue(table: string, field: string, raw: string | null, maps: Map
   if (field === "type" && table === "Supplier") return supplierTypeLabel(raw);
   if (field === "type" && table === "InventoryTransaction") return transactionTypeLabel(raw);
   if (field === "supplierType") return supplierTypeLabel(raw);
+  if (field === "role" && table === "User") return ROLE_LABELS[raw] ?? raw;
   if (field === "segregation") return segregationLabel(raw);
   if (field === "unitCost") return formatMoney(raw);
   if (/^-?\d+$/.test(raw) && ["qty", "qtyReceived", "cases", "unitsPerCase"].includes(field)) return Number(raw).toLocaleString();

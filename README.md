@@ -16,7 +16,13 @@ npm run setup      # creates .env, builds prisma/dev.db, loads seed data
 npm run dev        # http://localhost:3000
 ```
 
-Then pick a demo user in the top-right corner (Warehouse / QC / Admin).
+The first visit opens a short welcome: pick who you are (demo users: Warehouse Demo, QC Demo, Admin Demo), see what you can do, then take the 3-step tour of Home. Switch users or reopen the tour from the bottom of the sidebar.
+
+### Users and QC authorization
+
+- Everyone can use every screen: Receive, Record usage, Inspect and Release.
+- **QC authorized** (a per-user flag) is needed to set an inspection disposition, release or reject a lot, resolve QC follow-ups (e.g. a quantity difference) and change ASL approval. Others see those buttons disabled with "Requires QC authorization"; the server checks too.
+- **Admin** manages users: on the Users page an admin grants or removes QC authorization, with a reason that is saved in the audit trail.
 
 ## Useful scripts
 
@@ -35,11 +41,17 @@ prisma/schema.prisma   data model (spec §2)
 prisma/seed.ts         users, locations, rooms, categories + Lids config, suppliers, ANSI Z1.4 tables
 src/lib/               prisma client, numbering (item codes, REC-YYYY-###), audit log + readable formatting,
                        uploads, category config, completeness engine, lot progress, ANSI sampling plan, to-dos
-src/app/page.tsx       Home task hub: action buttons, my to-do (by role), lots in quarantine
-src/app/receive/       receiving wizard (spec §4.1)
-src/app/lots/          lots dashboard + lot detail (stepper, checklist, docs, sampling plan, transactions, audit)
-src/app/items/         items list / new / detail (with checklist)
-src/app/suppliers/     suppliers list / new / detail (with checklist and F.QC.009 / F.QC.015 documents)
+src/lib/navigation.ts  sidebar groups — add a module (Raw materials, Production, Export…) here
+src/proxy.ts           first visit (no user chosen yet) → /welcome
+src/app/welcome/       onboarding: welcome, "Who are you?", what you can do
+src/app/(app)/         everything with the sidebar (layout.tsx):
+  page.tsx             Home task hub: action buttons, my to-do, lots in quarantine, guided tour
+  receive/             receiving wizard (spec §4.1)
+  lots/                lots dashboard + lot detail (stepper, checklist, docs, sampling plan, release/reject, transactions, audit)
+  items/               items list / new / detail (with checklist)
+  suppliers/           suppliers list / new / detail (with checklist and F.QC.009 / F.QC.015 documents)
+  users/               users and QC authorization (admin)
+public/logo.svg        company logo (currently a placeholder — replace with the real file)
 uploads/               uploaded files (git-ignored)
 ```
 
@@ -54,6 +66,6 @@ uploads/               uploaded files (git-ignored)
 - [ ] 7. AuditLog on every create/update
 - [ ] 8. Export
 
-After pulling these changes run `npm run db:migrate` (adds supplier documents) and `npm run db:seed` (updates the Lids checklist config).
+After pulling changes run `npm run db:migrate` then `npm run db:seed`. The migrations convert old roles: former "qc" users become QC authorized, warehouse/qc roles become "user", and both changes are written to the audit trail.
 
 The ANSI Z1.4 tables in `prisma/seed.ts` must be checked by QA against the printed standard before use.

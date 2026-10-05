@@ -91,7 +91,7 @@ export default async function SupplierDetailPage({
           {user ? (
             <SupplierForm
               action={updateSupplier.bind(null, supplier.id)}
-              canApprove={user.role === "qc" || user.role === "admin"}
+              canApprove={user.qcAuthorized}
               initial={supplier}
             />
           ) : (

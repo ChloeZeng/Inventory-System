@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { SUPPLIER_TYPES } from "@/lib/constants";
+import { QC_AUTH_REQUIRED, SUPPLIER_TYPES } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass } from "@/components/ui";
 
@@ -49,7 +49,7 @@ export function SupplierForm({
         <Field
           label="Approved Supplier List (ASL, F.QC.010)"
           error={fe.aslApproved}
-          hint={canApprove ? "Receiving from a supplier that is not approved shows a warning." : "Only QC or admin can change this."}
+          hint={canApprove ? "Receiving from a supplier that is not approved shows a warning." : `${QC_AUTH_REQUIRED} to change this.`}
         >
           <label className="flex items-center gap-2 text-sm">
             {/* Disabled checkboxes are not submitted, so mirror the current value in a hidden field. */}

@@ -1,9 +1,9 @@
 // The Home page "My to-do" list: every open requirement turned into one
-// action, routed to the role that fixes it, linking straight to the fix.
+// action, linking straight to the fix. QC decisions (owner "qc") are listed
+// only for QC-authorized users; everything else is for everyone.
 
 import { prisma } from "./prisma";
-import type { Role } from "./constants";
-import { ownerOf, ownerOfOpen } from "./completeness";
+import { ownerOf, ownerOfOpen, type Owner } from "./completeness";
 import { loadAnsiTables, samplingPlan } from "./sampling";
 import {
   LOT_INCLUDE,
@@ -23,7 +23,7 @@ export type Todo = {
   title: string;
   context: string;
   href: string;
-  owner: Role;
+  owner: Owner;
   ref?: string;
   kind: "inspect" | "release" | "reject" | "missing";
 };
@@ -145,6 +145,6 @@ export async function loadTodos(): Promise<Todo[]> {
   return [...qcActions, ...lotMissing, ...itemTodos, ...supplierTodos];
 }
 
-export function todosForRole(todos: Todo[], role: string) {
-  return role === "admin" ? todos : todos.filter((t) => t.owner === role);
+export function todosForUser(todos: Todo[], user: { qcAuthorized: boolean }) {
+  return user.qcAuthorized ? todos : todos.filter((t) => t.owner === "anyone");
 }

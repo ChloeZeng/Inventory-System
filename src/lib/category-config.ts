@@ -30,7 +30,7 @@ export type Requirement = {
   followUp?: {
     note?: string; // path of the explanation shown on the line, e.g. "receipt.qtyMatchNote"
     resolvedBy?: string; // path that, once filled, closes the follow-up, e.g. "receipt.qtyDiffResolution"
-    owner?: "warehouse" | "qc" | "admin"; // who may resolve it
+    owner?: RequirementOwner; // "qc": only a QC-authorized user may resolve it
   };
   // for source=document: document type and what it is attached to
   documentType?: string;
@@ -39,11 +39,15 @@ export type Requirement = {
   anyOf?: string[];
   // the form, SOP or regulation the requirement comes from, e.g. "F.WD.003"
   ref?: string;
-  // which role's to-do list it lands on (default: qc for inspections, warehouse otherwise)
-  owner?: "warehouse" | "qc" | "admin";
+  // "qc": a QC decision, done only by a QC-authorized user and listed only on their to-do.
+  // Default: "qc" for inspections, "anyone" otherwise.
+  owner?: RequirementOwner;
 };
 
 export type Stage = "at_receiving" | "before_release";
+
+// Older stored configs may still say "warehouse" or "admin": both mean "anyone".
+export type RequirementOwner = "anyone" | "qc" | "warehouse" | "admin";
 
 export type CategoryConfig = {
   specFields: SpecField[];
