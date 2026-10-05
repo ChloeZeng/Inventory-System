@@ -73,16 +73,16 @@ export async function loadTodos(): Promise<Todo[]> {
         key: `inspect-${lot.id}`,
         title: `Inspect lot ${label}${samples}`,
         context,
-        href: `/lots/${lot.id}#inspection`,
+        href: `/lots/${lot.id}?tab=inspection`,
         owner: "qc",
         ref: "F.WD.003",
         kind: "inspect",
       });
     }
     if (progress.next === "release")
-      qcActions.push({ key: `release-${lot.id}`, title: `Release lot ${label}`, context, href: `/lots/${lot.id}#release`, owner: "qc", kind: "release" });
+      qcActions.push({ key: `release-${lot.id}`, title: `Release lot ${label}`, context, href: `/lots/${lot.id}?do=release`, owner: "qc", kind: "release" });
     if (progress.next === "reject")
-      qcActions.push({ key: `reject-${lot.id}`, title: `Reject lot ${label} — inspection failed`, context, href: `/lots/${lot.id}#release`, owner: "qc", kind: "reject" });
+      qcActions.push({ key: `reject-${lot.id}`, title: `Reject lot ${label} — inspection failed`, context, href: `/lots/${lot.id}?do=reject`, owner: "qc", kind: "reject" });
 
     for (const r of summary.open) {
       // inspections are listed above; item paperwork is listed once per item below

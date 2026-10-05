@@ -41,13 +41,16 @@ prisma/schema.prisma   data model (spec §2)
 prisma/seed.ts         users, locations, rooms, categories + Lids config, suppliers, ANSI Z1.4 tables
 src/lib/               prisma client, numbering (item codes, REC-YYYY-###), audit log + readable formatting,
                        uploads, category config, completeness engine, lot progress, ANSI sampling plan, to-dos
+src/components/detail/ detail-page kit (sticky header, what's next card, requirements panel with one-field Fix modals,
+                       tabs; ?tab= / ?fix=<requirement> / ?do=<action> deep links) — lots use it; items and suppliers can follow
+src/lib/lot-fixes.ts   lot requirements → Fix forms and the "What's next" sentence and button
 src/lib/navigation.ts  sidebar groups — add a module (Raw materials, Production, Export…) here
 src/proxy.ts           first visit (no user chosen yet) → /welcome
 src/app/welcome/       onboarding: welcome, "Who are you?", what you can do
 src/app/(app)/         everything with the sidebar (layout.tsx):
   page.tsx             Home task hub: action buttons, my to-do, lots in quarantine, guided tour
   receive/             receiving wizard (spec §4.1)
-  lots/                lots dashboard + lot detail (stepper, checklist, docs, sampling plan, release/reject, transactions, audit)
+  lots/                lots dashboard + lot detail (top: identity, steps, what's next, open requirements; tabs: Details | Documents | Inspection | History)
   items/               items list / new / detail (with checklist)
   suppliers/           suppliers list / new / detail (with checklist and F.QC.009 / F.QC.015 documents)
   users/               users and QC authorization (admin)

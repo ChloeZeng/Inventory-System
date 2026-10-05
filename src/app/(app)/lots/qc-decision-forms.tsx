@@ -3,6 +3,7 @@
 import { startTransition, useActionState } from "react";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
+import { useCloseOnSuccess } from "@/components/detail/shell";
 
 type Action = (prev: ActionState, formData: FormData) => Promise<ActionState>;
 
@@ -19,6 +20,7 @@ function submitWithConfirm(message: string, dispatch: (fd: FormData) => void) {
 
 export function ReleaseForm({ action, lotLabel, ready }: { action: Action; lotLabel: string; ready: boolean }) {
   const [state, formAction, pending] = useActionState(action, {});
+  useCloseOnSuccess(state);
   return (
     <form onSubmit={submitWithConfirm(`Release lot ${lotLabel}? It can then be used in production.`, formAction)} className="space-y-3">
       <label className="flex items-start gap-2 text-sm">
@@ -39,6 +41,7 @@ export function ReleaseForm({ action, lotLabel, ready }: { action: Action; lotLa
 
 export function RejectForm({ action, lotLabel }: { action: Action; lotLabel: string }) {
   const [state, formAction, pending] = useActionState(action, {});
+  useCloseOnSuccess(state);
   return (
     <form onSubmit={submitWithConfirm(`Reject lot ${lotLabel}? It can never be used.`, formAction)} className="space-y-3">
       <Field label="Reason for rejecting" htmlFor="rejectReason" required error={state.fieldErrors?.reason} hint="Saved in the audit trail.">

@@ -35,17 +35,22 @@ const wasBlank = (k: string, v: unknown) =>
 const same = (a: unknown, b: unknown) =>
   (a instanceof Date ? a.toISOString() : String(a ?? "")) === (b instanceof Date ? b.toISOString() : String(b ?? ""));
 
-// "Complete missing info" on the lot page: receipt-level and lot-level fields that
-// can be filled in after receiving. Every change goes to the AuditLog; changing a
-// value that was already recorded needs a reason.
+// Lot details on the lot page: receipt-level and lot-level fields that can be
+// filled in after receiving. Used by the full Details form and by the one-field
+// "Fix" modals: a form that sends `_fields` saves only those fields (a checkbox
+// that is absent then means "No"); without `_fields` every field is saved.
+// Every change goes to the AuditLog; changing a value that was already recorded needs a reason.
 export async function updateLotDetails(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
   try {
     const user = await requireUser();
     const lot = await prisma.lot.findUniqueOrThrow({ where: { id: lotId }, include: { receipt: true } });
     const fieldErrors: Record<string, string> = {};
+    const only = formData.getAll("_fields").map(String);
+    const sends = (k: string) => only.length === 0 || only.includes(k);
+    const pick = <T extends Record<string, unknown>>(o: T) => Object.fromEntries(Object.entries(o).filter(([k]) => sends(k))) as Partial<T>;
 
     const qtyMatches = str(formData, "qtyMatchesPackingList");
-    const receiptAfter = {
+    const receiptAfter = pick({
       poInvoiceNo: str(formData, "poInvoiceNo"),
       trackingNo: str(formData, "trackingNo"),
       carrierInspectionDone: bool(formData, "carrierInspectionDone"),
@@ -53,35 +58,36 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
       qtyMatchNote: str(formData, "qtyMatchNote"),
       segregation: str(formData, "segregation") ?? "",
       quarantineStickerApplied: bool(formData, "quarantineStickerApplied"),
-    };
-    if (!SEGREGATION.some((s) => s.value === receiptAfter.segregation)) fieldErrors.segregation = "Pick a segregation option.";
-    if (receiptAfter.qtyMatchesPackingList === false && !receiptAfter.qtyMatchNote)
-      fieldErrors.qtyMatchNote = "Describe the shortage or difference.";
-
-    const unitCost = decimal(formData, "unitCost");
+    });
+    const unitCost = sends("unitCost") ? decimal(formData, "unitCost") : null;
     if (unitCost === "invalid") fieldErrors.unitCost = "Enter a number, e.g. 0.0125";
-    const lotAfter = {
+    const lotAfter = pick({
       supplierBatchNo: str(formData, "supplierBatchNo"),
       lotNo: str(formData, "lotNo"),
       mfgDate: dateOnly(formData, "mfgDate"),
       expDate: dateOnly(formData, "expDate"),
       unitCost: unitCost && unitCost !== "invalid" ? new Prisma.Decimal(unitCost).toString() : null,
       locationId: Number(formData.get("locationId")),
-    };
-    if (!lotAfter.supplierBatchNo && !lotAfter.lotNo) fieldErrors.supplierBatchNo = "Keep at least the batch no. or the lot no.";
-    if (lotAfter.mfgDate && lotAfter.expDate && lotAfter.expDate <= lotAfter.mfgDate) fieldErrors.expDate = "Exp date must be after mfg date.";
-    if (!(await prisma.location.findUnique({ where: { id: lotAfter.locationId } }))) fieldErrors.locationId = "Pick a location.";
+    });
 
     const receiptBefore = lot.receipt;
     const lotBefore = { ...lot, unitCost: lot.unitCost?.toString() ?? null };
-    const corrected = [
-      ...Object.keys(receiptAfter).filter(
-        (k) => !same(receiptBefore[k as keyof typeof receiptAfter], receiptAfter[k as keyof typeof receiptAfter]) && !wasBlank(k, receiptBefore[k as keyof typeof receiptAfter]),
-      ),
-      ...Object.keys(lotAfter).filter(
-        (k) => !same(lotBefore[k as keyof typeof lotAfter], lotAfter[k as keyof typeof lotAfter]) && !wasBlank(k, lotBefore[k as keyof typeof lotAfter]),
-      ),
-    ];
+    // what the records will look like after this save, for rules across fields
+    const receiptNext = { ...receiptBefore, ...receiptAfter };
+    const lotNext = { ...lotBefore, ...lotAfter };
+
+    if ("segregation" in receiptAfter && !SEGREGATION.some((s) => s.value === receiptNext.segregation))
+      fieldErrors.segregation = "Pick a segregation option.";
+    if (receiptNext.qtyMatchesPackingList === false && !receiptNext.qtyMatchNote)
+      fieldErrors.qtyMatchNote = "Describe the shortage or difference.";
+    if (!lotNext.supplierBatchNo && !lotNext.lotNo) fieldErrors.supplierBatchNo = "Keep at least the batch no. or the lot no.";
+    if (lotNext.mfgDate && lotNext.expDate && lotNext.expDate <= lotNext.mfgDate) fieldErrors.expDate = "Exp date must be after mfg date.";
+    if ("locationId" in lotAfter && !(await prisma.location.findUnique({ where: { id: lotNext.locationId } })))
+      fieldErrors.locationId = "Pick a location.";
+
+    const changedFrom = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+      Object.keys(after).filter((k) => !same(before[k], after[k]) && !wasBlank(k, before[k]));
+    const corrected = [...changedFrom(receiptBefore, receiptAfter), ...changedFrom(lotBefore, lotAfter)];
     const reason = str(formData, "reason");
     if (corrected.length && !reason)
       fieldErrors.reason = `You changed a value that was already recorded (${corrected.map((k) => LABELS[k] ?? k).join(", ")}) — give a reason.`;
@@ -89,8 +95,7 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
 
     // A QC sign-off covers one specific answer and note. If either changes, it no longer applies.
     const qtyDiffChanged =
-      !same(receiptBefore.qtyMatchesPackingList, receiptAfter.qtyMatchesPackingList) ||
-      !same(receiptBefore.qtyMatchNote, receiptAfter.qtyMatchNote);
+      !same(receiptBefore.qtyMatchesPackingList, receiptNext.qtyMatchesPackingList) || !same(receiptBefore.qtyMatchNote, receiptNext.qtyMatchNote);
     const receiptData =
       qtyDiffChanged && receiptBefore.qtyDiffResolution
         ? { ...receiptAfter, qtyDiffResolution: null, qtyDiffResolvedById: null, qtyDiffResolvedAt: null }

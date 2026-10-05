@@ -3,10 +3,12 @@
 import { startTransition, useActionState } from "react";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass } from "@/components/ui";
+import { useCloseOnSuccess } from "@/components/detail/shell";
 
 // QC sign-off on a follow-up, e.g. a total that does not match the packing list / PO.
 export function ResolveForm({ action, placeholder }: { action: (prev: ActionState, formData: FormData) => Promise<ActionState>; placeholder?: string }) {
   const [state, formAction, pending] = useActionState(action, {});
+  useCloseOnSuccess(state);
   return (
     <form
       className="space-y-3"

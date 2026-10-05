@@ -89,27 +89,28 @@ function docParam(req: Requirement) {
   return type ? `?doc=${encodeURIComponent(type)}` : "";
 }
 
+// Lot requirements open the lot page straight into that requirement's Fix modal
+// (?fix=<key>); item and supplier requirements go to the field or upload on their page.
 export function fixHref(req: Requirement, ctx: FixContext): string {
-  if (req.source === "inspection") return `/lots/${ctx.lotId}#inspection`;
+  if (req.source === "inspection") return `/lots/${ctx.lotId}?tab=inspection`;
   if (req.source === "document") {
     if (req.attachedTo === "item") return `/items/${ctx.itemId}${docParam(req)}#documents`;
     if (req.attachedTo === "supplier") return `/suppliers/${ctx.supplierId}${docParam(req)}#documents`;
-    return `/lots/${ctx.lotId}${docParam(req)}#documents`;
+    return `/lots/${ctx.lotId}?fix=${req.key}`;
   }
   const path = req.path ?? req.anyOf?.[0] ?? "";
   const [record, ...rest] = path.split(".");
   const field = rest.at(-1);
   if (record === "item") return `/items/${ctx.itemId}#spec_${field}`;
   if (record === "supplier") return `/suppliers/${ctx.supplierId}#field-${field}`;
-  return `/lots/${ctx.lotId}#field-${field}`;
+  return `/lots/${ctx.lotId}?fix=${req.key}`;
 }
 
-// Where the button on an open checklist line goes: a follow-up goes to its
-// resolution (or release) section, anything else to the field / upload.
+// A follow-up opens its resolution (a failed inspection: the reject dialog).
 export function fixHrefFor(r: CheckResult, ctx: FixContext): string {
   if (r.status === "followup") {
-    if (r.req.source === "inspection") return `/lots/${ctx.lotId}#release`;
-    if (r.req.followUp) return `/lots/${ctx.lotId}#followup-${r.req.key}`;
+    if (r.req.source === "inspection") return `/lots/${ctx.lotId}?do=reject`;
+    if (r.req.followUp) return `/lots/${ctx.lotId}?fix=${r.req.key}`;
   }
   return fixHref(r.req, ctx);
 }
