@@ -39,6 +39,10 @@ export type Requirement = {
   anyOf?: string[];
   // the form, SOP or regulation the requirement comes from, e.g. "F.WD.003"
   ref?: string;
+  // imperative wording for work lists, e.g. "Confirm quarantine labels are applied to every box"
+  // (falls back to a verb + label); followUpTask: the same for a "Needs follow-up" answer
+  task?: string;
+  followUpTask?: string;
   // "qc": a QC decision, done only by a QC-authorized user and listed only on their to-do.
   // Default: "qc" for inspections, "anyone" otherwise.
   owner?: RequirementOwner;

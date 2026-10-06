@@ -42,8 +42,7 @@ export function CompletionBar({ summary, compact = false }: { summary: CheckSumm
     <div className={compact ? "min-w-28" : ""}>
       <div className={`flex items-center justify-between gap-2 ${compact ? "text-xs" : "text-sm"}`}>
         <span className={compact ? "tabular-nums text-slate-600" : "font-medium"}>
-          {summary.met} of {summary.total}
-          {compact ? "" : " requirements met"}
+          {compact ? `${summary.met}/${summary.total} requirements met` : `${summary.met} of ${summary.total} requirements met`}
         </span>
         {!compact && summary.complete && <Badge tone="green">Audit ready</Badge>}
       </div>

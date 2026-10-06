@@ -42,7 +42,7 @@ export function Sidebar({
           <Image
             src="/logo.svg"
             alt="SVLSG"
-            width={narrow ? 36 : 132}
+            width={narrow ? 36 : 128}
             height={36}
             unoptimized
             priority
@@ -111,7 +111,7 @@ export function Sidebar({
           <label className="block px-2 pb-1">
             <span className="mb-1 block text-xs text-slate-500">Switch user</span>
             <select
-              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-700"
+              className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-700"
               value={currentUser?.id ?? ""}
               disabled={pending}
               onChange={(e) => startTransition(() => setCurrentUser(Number(e.target.value)))}
@@ -166,7 +166,7 @@ export function Sidebar({
       <aside
         className={`fixed inset-y-0 left-0 z-50 w-64 border-r border-slate-200 bg-white transition-transform md:sticky md:top-0 md:z-auto md:h-screen md:translate-x-0 md:transition-[width] ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
-        } ${collapsed ? "md:w-16" : "md:w-60"}`}
+        } ${collapsed ? "md:w-16" : "md:w-52"}`}
       >
         {panel}
       </aside>
