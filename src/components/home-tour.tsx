@@ -7,9 +7,9 @@ import { finishTour } from "@/app/actions";
 // 3-step guided tour on the real Home page. Each step highlights the element
 // marked data-tour="…" and shows a small tooltip with Next / Skip.
 const STEPS = [
-  { target: "summary", title: "Where lots stand", text: "Lots awaiting inspection, awaiting release, or blocked. Click a card to filter the list." },
-  { target: "worklist", title: "Your work, by lot", text: "Each lot shows its status, why, and the next action. Expand it to see every open task." },
-  { target: "shortcuts", title: "Shortcuts", text: "Receive a delivery, or open the lists of lots to inspect, release or use." },
+  { target: "queues", title: "Work queues", text: "Inspection, release review, and receiving & document follow-up — with how many you can act on." },
+  { target: "worklist", title: "Next tasks", text: "The oldest lots first. Each button does the next step for that lot." },
+  { target: "actions", title: "Start something new", text: "Receive a delivery, or record usage from a released lot." },
 ] as const;
 
 type Box = { top: number; left: number; width: number; height: number };

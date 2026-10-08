@@ -3,13 +3,18 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
-import { LOT_DOCUMENT_TYPES, segregationLabel, supplierTypeLabel, transactionTypeLabel } from "@/lib/constants";
+import { LOT_DOCUMENT_TYPES, USAGE_TYPES, segregationLabel, supplierTypeLabel, transactionTypeLabel } from "@/lib/constants";
 import { releaseReadiness } from "@/lib/completeness";
-import { toDateInput } from "@/lib/forms";
+import { toDateInput, todayDateInput } from "@/lib/forms";
+import { parseChecklist } from "@/lib/inspection";
+import { lotWorkflow, workflowInputFromLot } from "@/lib/workflow";
 import { LOT_INCLUDE, lotLabel, lotStatus } from "@/lib/records";
 import { loadAnsiTables, samplingPlan } from "@/lib/sampling";
 import { lotNextAction, lotRequirementGroups, type LotFieldValues } from "@/lib/lot-fixes";
-import { Badge, Card, Table, buttonClass, formatDate, formatDateTime, formatMoney, secondaryButtonClass } from "@/components/ui";
+import { InspectionForm } from "../inspection-form";
+import { InspectionResult } from "../inspection-result";
+import { UsageForm } from "../usage-form";
+import { Badge, Card, Table, formatDate, formatDateTime, formatMoney, secondaryButtonClass } from "@/components/ui";
 import { Stepper } from "@/components/progress";
 import { UploadForm } from "@/components/upload-form";
 import { AuditHistory } from "@/components/audit-history";
@@ -24,7 +29,7 @@ import { uploadItemDocument } from "../../items/actions";
 import { LotDetailsForm } from "../lot-details-form";
 import { ResolveForm } from "../resolve-form";
 import { RejectForm, ReleaseForm } from "../qc-decision-forms";
-import { rejectLot, releaseLot, resolveQtyDifference, updateLotDetails, uploadLotDocument } from "../actions";
+import { recordUsage, rejectLot, releaseLot, resolveQtyDifference, saveInspection, updateLotDetails, uploadLotDocument } from "../actions";
 
 // Lot detail, readable in 10 seconds:
 //   top (always visible)  identity · step bar · what's next · open requirements
@@ -45,7 +50,7 @@ export default async function LotDetailPage({
   const lot = await prisma.lot.findUnique({ where: { id }, include: LOT_INCLUDE });
   if (!lot) notFound();
 
-  const [user, details, locations, tables] = await Promise.all([
+  const [user, details, locations, tables, rooms] = await Promise.all([
     getCurrentUser(),
     prisma.lot.findUniqueOrThrow({
       where: { id },
@@ -56,12 +61,13 @@ export default async function LotDetailPage({
         receipt: { include: { receivedBy: true, qtyDiffResolvedBy: true, documents: { include: { uploadedBy: true } }, lots: { include: { item: true } } } },
         documents: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
         item: { include: { documents: { where: { type: "Spec sheet" }, include: { uploadedBy: true } } } },
-        inspections: { include: { inspectedBy: true }, orderBy: { inspectedAt: "desc" } },
+        inspections: { include: { inspectedBy: true, confirmedBy: true }, orderBy: { id: "desc" } },
         transactions: { include: { operator: true, room: true }, orderBy: [{ date: "asc" }, { id: "asc" }] },
       },
     }),
     prisma.location.findMany({ orderBy: { name: "asc" } }),
     loadAnsiTables(prisma),
+    prisma.room.findMany({ where: { locationId: lot.locationId }, orderBy: { name: "asc" } }),
   ]);
 
   const { summary, balance, progress, lastInspection } = lotStatus(lot);
@@ -99,21 +105,20 @@ export default async function LotDetailPage({
     itemCode: lot.item.code,
     receivingNo: lot.receipt.receivingNo,
   });
-  const next = lotNextAction({
-    progress,
-    summary,
-    plan,
-    balance,
-    released: lot.releasedAt ? formatDate(lot.releasedAt) : undefined,
+  // the same workflow selector Home and the Lots list use
+  const wf = lotWorkflow(workflowInputFromLot(lot), { qcAuthorized: isQc });
+  const next = lotNextAction(wf, {
     rejected: lot.rejectedAt
-      ? `on ${formatDate(lot.rejectedAt)} by ${details.rejectedBy?.name ?? "—"}${lot.rejectionReason ? `: ${lot.rejectionReason}` : ""}`
+      ? `Rejected on ${formatDate(lot.rejectedAt)} by ${details.rejectedBy?.name ?? "—"}${lot.rejectionReason ? `: ${lot.rejectionReason}` : ""}. Do not use.`
       : undefined,
   });
+  const finalInspection = details.inspections.find((i) => i.status === "final") ?? null;
+  const draftInspection = details.inspections.find((i) => i.status === "draft") ?? null;
 
   const captions = [
     formatDate(lot.receipt.dateReceived),
     lot.qcStatus === "Quarantine" ? "On hold" : "Ended",
-    lastInspection ? lastInspection.disposition : plan ? `${plan.sampleSize.toLocaleString()} samples` : undefined,
+    lastInspection ? (lastInspection.disposition ?? undefined) : draftInspection ? "Draft saved" : undefined,
     lot.qcStatus === "Released" ? formatDate(lot.releasedAt) : lot.qcStatus === "Rejected" ? "Rejected" : undefined,
     lot.qcStatus === "Released" ? `${balance.toLocaleString()} left` : undefined,
   ];
@@ -149,8 +154,33 @@ export default async function LotDetailPage({
         doneMessage: "Lot released.",
         body: (
           <div className="space-y-4">
+            <dl className="space-y-1 rounded-md bg-slate-50 px-3 py-2 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Inspection (F.WD.003)</dt>
+                <dd>
+                  {finalInspection
+                    ? `${finalInspection.disposition} — confirmed by ${finalInspection.confirmedBy?.name ?? "—"}${finalInspection.confirmedAt ? ` on ${formatDate(finalInspection.confirmedAt)}` : ""}`
+                    : wf.inspectionRequired
+                      ? "Not confirmed"
+                      : "Not configured for this category"}
+                </dd>
+              </div>
+              {finalInspection && (
+                <div className="flex justify-between gap-4">
+                  <dt className="text-slate-500">Items inspected · defects (critical / major / minor)</dt>
+                  <dd className="tabular-nums">
+                    {finalInspection.itemsSampled?.toLocaleString() ?? "—"} · {finalInspection.criticalDefects} / {finalInspection.majorDefects} /{" "}
+                    {finalInspection.minorDefects}
+                  </dd>
+                </div>
+              )}
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Documents on file</dt>
+                <dd>{[...new Set([...details.documents, ...details.receipt.documents, ...details.item.documents].map((d) => d.type))].join(", ") || "None"}</dd>
+              </div>
+            </dl>
             <p className={`text-sm font-medium ${release.ready ? "text-emerald-700" : "text-red-700"}`}>
-              {release.ready ? "✓ All requirements met" : `✕ ${release.met} of ${release.total} requirements met — ${release.open.length} open`}
+              {release.ready ? "✓ All release requirements met" : `✕ ${release.met} of ${release.total} requirements met — ${release.open.length} open`}
             </p>
             <QcGate authorized={isQc} label="Release lot">
               <ReleaseForm action={releaseLot.bind(null, lot.id)} lotLabel={label} ready={release.ready} />
@@ -165,6 +195,22 @@ export default async function LotDetailPage({
           <QcGate authorized={isQc} label="Reject lot" className={`${secondaryButtonClass} border-red-300 text-red-700`}>
             <RejectForm action={rejectLot.bind(null, lot.id)} lotLabel={label} />
           </QcGate>
+        ),
+      };
+    }
+    if (wf.stage === "released") {
+      modals["do:usage"] = {
+        title: `Record usage — lot ${label}`,
+        doneMessage: "Usage recorded.",
+        body: (
+          <UsageForm
+            action={recordUsage.bind(null, lot.id)}
+            balance={balance}
+            unitCost={unitCost}
+            types={USAGE_TYPES.map((t) => ({ value: t, label: transactionTypeLabel(t) }))}
+            rooms={rooms.map((r) => ({ id: r.id, name: r.name }))}
+            today={todayDateInput()}
+          />
         ),
       };
     }
@@ -316,8 +362,8 @@ export default async function LotDetailPage({
   );
 
   const inspectionTab = (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <Card title="Sampling plan (ANSI Z1.4)" className="lg:col-span-2">
+    <div className="space-y-6">
+      <Card title="Sampling plan (ANSI Z1.4)">
         {plan && (
           <>
             <p className="mb-3 text-sm text-slate-600">
@@ -354,31 +400,33 @@ export default async function LotDetailPage({
       </Card>
 
       <Card title="Inspection (F.WD.003)">
-        {details.inspections.length > 0 ? (
-          <ul className="space-y-1 text-sm">
-            {details.inspections.map((i) => (
-              <li key={i.id}>
-                <Badge tone={i.disposition === "Approved" ? "green" : "red"}>{i.disposition}</Badge> by {i.inspectedBy.name} on{" "}
-                {formatDateTime(i.inspectedAt)}
-              </li>
-            ))}
-          </ul>
+        {finalInspection ? (
+          <InspectionResult inspection={finalInspection} questions={config.inspectionChecklist} />
+        ) : lot.qcStatus !== "Quarantine" ? (
+          <p className="text-sm text-slate-600">No confirmed inspection is recorded for this lot.</p>
+        ) : !wf.inspectionRequired ? (
+          <p className="text-sm text-slate-600">No incoming inspection is configured for {lot.item.category.name}.</p>
+        ) : user ? (
+          <InspectionForm
+            action={saveInspection.bind(null, lot.id)}
+            questions={config.inspectionChecklist}
+            plan={plan && { classes: plan.classes, sampleSize: plan.sampleSize, lotSize: plan.lotSize, hundredPercent: plan.hundredPercent }}
+            qcAuthorized={isQc}
+            draft={
+              draftInspection && {
+                casesSampled: draftInspection.casesSampled,
+                itemsSampled: draftInspection.itemsSampled,
+                checklist: parseChecklist(draftInspection.checklist),
+                defects: { critical: draftInspection.criticalDefects, major: draftInspection.majorDefects, minor: draftInspection.minorDefects },
+                defectNotes: draftInspection.defectNotes,
+                comments: draftInspection.comments,
+                savedBy: draftInspection.inspectedBy.name,
+                savedAt: formatDateTime(draftInspection.inspectedAt),
+              }
+            }
+          />
         ) : (
-          <p className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-            Not inspected yet. Anyone can draw and count the samples; setting the disposition needs QC authorization.
-          </p>
-        )}
-        {lot.qcStatus === "Quarantine" && (
-          <div className="mt-4">
-            <QcGate authorized={isQc} label="Set disposition (F.WD.003)">
-              <div className="inline-flex flex-col items-start gap-1">
-                <button type="button" disabled className={`${buttonClass} cursor-not-allowed`}>
-                  Set disposition (F.WD.003)
-                </button>
-                <p className="text-xs text-slate-500">The guided F.WD.003 inspection form arrives in build step 5.</p>
-              </div>
-            </QcGate>
-          </div>
+          <p className="text-sm text-amber-700">Pick a user in the sidebar to enter inspection results.</p>
         )}
       </Card>
     </div>
@@ -492,12 +540,17 @@ export default async function LotDetailPage({
       />
 
       <div className="mt-4 space-y-4">
-        <Stepper states={progress.states} captions={captions} />
+        <Stepper
+          states={progress.states}
+          captions={captions}
+          hrefs={["?tab=details", "?tab=details", "?tab=inspection", "?tab=details", "?tab=history"]}
+        />
         <NextActionCard
           sentence={next.sentence}
           tone={next.tone}
           primary={user ? next.primary : undefined}
           secondary={user ? next.secondary : undefined}
+          waiting={next.waiting}
           qcAuthorized={isQc}
         />
         <FlashMessage />

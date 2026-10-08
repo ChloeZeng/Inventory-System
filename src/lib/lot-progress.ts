@@ -31,9 +31,11 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 export function lotProgress(lot: {
   qcStatus: string;
   summary: CheckSummary;
-  lastInspection?: { disposition: string } | null;
+  lastInspection?: { disposition: string | null } | null; // last confirmed inspection
   balance: number;
 }): LotProgress {
+  // a category without an inspection requirement goes straight to release review
+  const inspectionRequired = lot.summary.results.some((r) => r.req.source === "inspection");
   const build = (current: number, next: NextAction, nextLabel: string, failed = false): LotProgress => ({
     states: LOT_STEPS.map((_, i) => (i < current ? "done" : i === current ? (failed ? "failed" : "current") : "upcoming")),
     current,
@@ -51,8 +53,8 @@ export function lotProgress(lot: {
   // Blank or wrong receiving answers come first; a follow-up (e.g. a shortage) does not stop inspection.
   const receivingMissing = stageCounts(lot.summary, "at_receiving").open.filter((r) => r.status === "missing").length;
   if (receivingMissing) return build(0, "finish_receiving", `Finish receiving (${receivingMissing} missing)`);
-  if (!lot.lastInspection) return build(2, "inspect", "Inspect (F.WD.003)");
-  if (lot.lastInspection.disposition !== "Approved") return build(3, "reject", "Inspection failed — reject the lot (QC authorized)");
+  if (!lot.lastInspection && inspectionRequired) return build(2, "inspect", "Inspect (F.WD.003)");
+  if (lot.lastInspection && lot.lastInspection.disposition !== "Approved") return build(3, "reject", "Inspection failed — reject the lot (QC authorized)");
   const open = lot.summary.open.length;
   if (open) return build(3, "complete_missing", `Resolve ${plural(open, "open requirement")}, then release`);
   return build(3, "release", "Ready to release");

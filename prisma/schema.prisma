@@ -29,15 +29,16 @@ model User {
   active          Boolean   @default(true)
   createdAt       DateTime  @default(now())
 
-  receiptsReceived Receipt[]              @relation("ReceiptReceivedBy")
-  qtyDiffsResolved Receipt[]              @relation("ReceiptQtyDiffResolvedBy")
-  lotsOperated     Lot[]                  @relation("LotOperator")
-  lotsReleased     Lot[]                  @relation("LotReleasedBy")
-  lotsRejected     Lot[]                  @relation("LotRejectedBy")
-  documents        Document[]
-  inspections      Inspection[]
-  transactions     InventoryTransaction[]
-  auditLogs        AuditLog[]
+  receiptsReceived     Receipt[]              @relation("ReceiptReceivedBy")
+  qtyDiffsResolved     Receipt[]              @relation("ReceiptQtyDiffResolvedBy")
+  lotsOperated         Lot[]                  @relation("LotOperator")
+  lotsReleased         Lot[]                  @relation("LotReleasedBy")
+  lotsRejected         Lot[]                  @relation("LotRejectedBy")
+  documents            Document[]
+  inspections          Inspection[]           @relation("InspectionInspectedBy")
+  inspectionsConfirmed Inspection[]           @relation("InspectionConfirmedBy")
+  transactions         InventoryTransaction[]
+  auditLogs            AuditLog[]
 }
 
 model Location {
@@ -163,7 +164,25 @@ model Lot {
   inspections          Inspection[]
   transactions         InventoryTransaction[]
 
+  // ---- Workflow cache (src/lib/workflow.ts → refreshLotWorkflow) ----
+  // Derived from the rules above and rewritten in the same transaction as every change
+  // that affects them, so lists can filter, count and paginate in the database.
+  // Never edited directly; the rules (completeness engine, release checks) stay authoritative.
+  wfStage           String  @default("receiving") // receiving | inspection | release | failed | released | depleted | rejected
+  wfInspection      Boolean @default(false) // in the inspection queue (quarantine, no confirmed inspection)
+  wfInspectionDraft Boolean @default(false) // a draft inspection is waiting for QC confirmation
+  wfRelease         Boolean @default(false) // in the release-review queue (confirmed inspection, or none required)
+  wfReleaseBlocked  Boolean @default(false) // release requirements remain
+  wfFollowup        Boolean @default(false) // open receiving / document / paperwork tasks
+  wfFollowupQcOnly  Boolean @default(false) // every open follow-up task needs QC authorization
+  wfOpenTasks       Int     @default(0) // open requirements, excluding the inspection itself
+  wfBalance         Int     @default(0) // cached sum of transactions (the ledger stays authoritative)
+
   @@index([qcStatus])
+  @@index([wfInspection])
+  @@index([wfRelease])
+  @@index([wfFollowup])
+  @@index([wfStage])
 }
 
 model Document {
@@ -186,30 +205,37 @@ model Document {
   uploadedAt   DateTime  @default(now())
 }
 
-// F.WD.003
+// F.WD.003. A lot has at most one draft; a confirmed ("final") inspection is what
+// the completeness engine, release rules and queues look at. Drafts never count.
 model Inspection {
-  id                    Int      @id @default(autoincrement())
+  id                    Int       @id @default(autoincrement())
   lotId                 Int
-  lot                   Lot      @relation(fields: [lotId], references: [id])
-  inspectionLevel       String   @default("II")
+  lot                   Lot       @relation(fields: [lotId], references: [id])
+  status                String    @default("final") // draft | final
+  inspectionLevel       String    @default("II")
   lotSize               Int
-  codeLetter            String
-  plan                  String // JSON per defect class: [{cls, aql, codeLetter, sampleSize, ac, re}]
-  sampleSize            Int // sample actually drawn (largest of the plan)
+  codeLetter            String? // null when the category has no sampling plan
+  plan                  String    @default("[]") // JSON per defect class: [{cls, aql, codeLetter, sampleSize, ac, re}]
+  sampleSize            Int? // planned sample (largest of the plan)
   casesSampled          Int?
-  itemsSampled          Int?
-  checklist             String   @default("{}") // JSON: { questionKey: "yes" | "no" | "na" }
-  criticalDefects       Int      @default(0)
-  majorDefects          Int      @default(0)
-  minorDefects          Int      @default(0)
+  itemsSampled          Int? // actual items inspected
+  checklist             String    @default("{}") // JSON: { questionKey: { answer: "yes" | "no" | "na", defectClass? } }
+  criticalDefects       Int       @default(0)
+  majorDefects          Int       @default(0)
+  minorDefects          Int       @default(0)
   defectNotes           String?
   comments              String?
-  calculatedDisposition String // Approved | Rejected
-  disposition           String // final; differs only with overrideReason
+  calculatedDisposition String? // Approved | Rejected, from the plan; null without a plan
+  disposition           String? // set only when QC confirms; differs from calculated only with overrideReason
   overrideReason        String?
-  inspectedById         Int
-  inspectedBy           User     @relation(fields: [inspectedById], references: [id])
-  inspectedAt           DateTime @default(now())
+  inspectedById         Int // who last entered the results
+  inspectedBy           User      @relation("InspectionInspectedBy", fields: [inspectedById], references: [id])
+  inspectedAt           DateTime  @default(now())
+  confirmedById         Int? // QC-authorized user who confirmed the disposition
+  confirmedBy           User?     @relation("InspectionConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt           DateTime?
+
+  @@index([lotId, status])
 }
 
 model InventoryTransaction {
@@ -225,6 +251,8 @@ model InventoryTransaction {
   operatorId        Int
   operator          User     @relation(fields: [operatorId], references: [id])
   notes             String?
+  // one id per submitted form, so a double-submit cannot record the same usage twice
+  clientRequestId   String?  @unique
   createdAt         DateTime @default(now())
 
   @@index([lotId])

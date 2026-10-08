@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { startTransition, useActionState } from "react";
+import { startTransition, useActionState, useState } from "react";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass } from "@/components/ui";
 import { useCloseOnSuccess } from "./shell";
@@ -40,6 +40,14 @@ export function FixForm({
             </p>
           )}
           {resolve}
+          {spec.correction && save && (
+            <details className="rounded-md border border-slate-200 px-3 py-2">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700">Correct the recorded answer instead</summary>
+              <div className="mt-3">
+                <FieldsForm spec={spec.correction} action={save} />
+              </div>
+            </details>
+          )}
         </div>
       );
     case "link":
@@ -68,9 +76,23 @@ function useDispatch(action: Action) {
   return { state, pending, onSubmit };
 }
 
+// Is a value already recorded for this requirement? Changing a recorded value is a
+// correction, and updateLotDetails then requires a reason (filling a blank one does not).
+function hasRecordedValue(spec: Extract<FixSpec, { kind: "fields" | "confirm" | "answer" }>) {
+  if (spec.kind === "fields") return spec.correcting;
+  if (spec.kind === "answer") return spec.value !== "";
+  return false; // confirm: ticking a box that was not ticked is not a correction
+}
+
 function FieldsForm({ spec, action }: { spec: Extract<FixSpec, { kind: "fields" | "confirm" | "answer" }>; action: Action }) {
   const { state, pending, onSubmit } = useDispatch(action);
   const fe = state.fieldErrors ?? {};
+  // The reason input is shown up front for corrections, and in any case as soon as the
+  // server asks for one — it then stays, so the user can answer within the modal.
+  const [askReason, setAskReason] = useState(() => hasRecordedValue(spec));
+  if (fe.reason && !askReason) setAskReason(true);
+  const [answer, setAnswer] = useState(spec.kind === "answer" ? spec.value : "");
+
   return (
     <form onSubmit={onSubmit} className="space-y-4">
       {spec.kind === "fields" &&
@@ -111,31 +133,43 @@ function FieldsForm({ spec, action }: { spec: Extract<FixSpec, { kind: "fields" 
       {spec.kind === "answer" && (
         <>
           <input type="hidden" name="_fields" value={spec.field} />
-          <input type="hidden" name="_fields" value={spec.noteField} />
           <fieldset>
             <legend className="mb-2 text-sm font-medium text-slate-700">{spec.question}</legend>
             <div className="flex gap-4 text-sm">
               {(["yes", "no"] as const).map((v) => (
                 <label key={v} className="flex items-center gap-2">
-                  <input type="radio" name={spec.field} value={v} defaultChecked={spec.value === v} required />
+                  <input type="radio" name={spec.field} value={v} checked={answer === v} onChange={() => setAnswer(v)} required />
                   {v === "yes" ? "Yes" : "No"}
                 </label>
               ))}
             </div>
           </fieldset>
-          <Field label="If No: what is different?" htmlFor="fix-note" hint="Shortages and overages go here." error={fe[spec.noteField]}>
-            <textarea id="fix-note" name={spec.noteField} rows={2} defaultValue={spec.note} className={inputClass} />
-          </Field>
+          {answer === "no" ? (
+            <Field label="What is different?" htmlFor="fix-note" hint="Shortages and overages go here." error={fe[spec.noteField]}>
+              {/* the note is sent (and may change) only with a "No" answer */}
+              <input type="hidden" name="_fields" value={spec.noteField} />
+              <textarea id="fix-note" name={spec.noteField} rows={2} defaultValue={spec.note} className={inputClass} />
+            </Field>
+          ) : (
+            spec.note && (
+              <p className="text-xs text-slate-500">
+                The saved packing list note stays on record: “{spec.note}”.
+              </p>
+            )
+          )}
         </>
       )}
 
-      {/* a wrong value is already recorded: changing it needs a reason for the audit trail */}
-      {spec.kind === "fields" && spec.correcting ? (
-        <Field label="Reason for change" htmlFor="fix-reason" error={fe.reason} hint="Saved in the audit trail.">
-          <input id="fix-reason" name="reason" className={inputClass} />
+      {askReason && (
+        <Field
+          label="Reason for change"
+          htmlFor="fix-reason"
+          required
+          error={fe.reason}
+          hint="A value is already recorded, so the change needs a reason. Saved in the audit trail."
+        >
+          <input id="fix-reason" name="reason" className={inputClass} autoFocus={!!fe.reason} />
         </Field>
-      ) : (
-        fe.reason && <p className="text-xs text-red-600">{fe.reason}</p>
       )}
 
       <FormMessage state={state.error ? state : {}} />

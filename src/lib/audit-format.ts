@@ -74,9 +74,24 @@ const FIELD_LABELS: Record<string, string> = {
   productOrCustomer: "Product / customer",
   date: "Date",
   // inspection
-  inspectedById: "Inspected by",
+  inspectedById: "Results entered by",
   disposition: "Disposition",
   overrideReason: "Override reason",
+  calculatedDisposition: "Calculated from plan",
+  confirmedById: "Confirmed by (QC)",
+  confirmedAt: "Confirmed at",
+  status: "Status",
+  lotSize: "Lot size",
+  codeLetter: "Code letter",
+  sampleSize: "Planned sample",
+  casesSampled: "Cases sampled",
+  itemsSampled: "Items inspected",
+  checklist: "Checklist",
+  criticalDefects: "Critical defects",
+  majorDefects: "Major defects",
+  minorDefects: "Minor defects",
+  defectNotes: "Defect notes",
+  comments: "Comments",
 };
 
 const TABLE_LABELS: Record<string, string> = {
@@ -85,7 +100,7 @@ const TABLE_LABELS: Record<string, string> = {
 
 const ROLE_LABELS: Record<string, string> = { user: "User", admin: "Admin", warehouse: "Warehouse (removed role)", qc: "QC (removed role)" };
 
-const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById"];
+const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById", "confirmedById"];
 
 function humanize(field: string) {
   const s = field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
@@ -141,6 +156,7 @@ async function nameMaps(rows: AuditLog[]) {
     Receipt: new Map(receipts.map((r) => [r.id, r.receivingNo])),
     Lot: new Map(lots.map((l) => [l.id, lotName(l)])),
     Document: new Map(documents.map((d) => [d.id, `${d.type} — ${d.fileName}`])),
+    Inspection: new Map(recordIds(rows, "Inspection").map((id) => [id, `F.WD.003 #${id}`])),
     InventoryTransaction: new Map(
       transactions.map((t) => [t.id, `${transactionTypeLabel(t.type)} ${t.qty > 0 ? "+" : ""}${t.qty.toLocaleString()}`]),
     ),
@@ -170,7 +186,7 @@ function formatValue(table: string, field: string, raw: string | null, maps: Map
       if (Array.isArray(parsed)) return parsed.length ? parsed.join(", ") : null;
       const entries = Object.entries(parsed as Record<string, unknown>).filter(([, v]) => v !== null && v !== "");
       if (!entries.length) return null;
-      return entries.map(([k, v]) => `${maps.specLabels.get(k) ?? humanize(k)}: ${String(v)}`).join(", ");
+      return entries.map(([k, v]) => `${maps.specLabels.get(k) ?? humanize(k)}: ${nested(v)}`).join(", ");
     } catch {
       return raw;
     }
@@ -183,6 +199,15 @@ function formatValue(table: string, field: string, raw: string | null, maps: Map
   if (field === "unitCost") return formatMoney(raw);
   if (/^-?\d+$/.test(raw) && ["qty", "qtyReceived", "cases", "unitsPerCase"].includes(field)) return Number(raw).toLocaleString();
   return raw;
+}
+
+// a value inside a JSON object, e.g. an inspection checklist answer { answer, defectClass }
+function nested(v: unknown): string {
+  if (v && typeof v === "object" && "answer" in v) {
+    const a = v as { answer: string; defectClass?: string };
+    return `${a.answer === "na" ? "N/A" : a.answer === "yes" ? "Yes" : "No"}${a.defectClass ? ` (${a.defectClass})` : ""}`;
+  }
+  return typeof v === "object" ? JSON.stringify(v) : String(v);
 }
 
 export type AuditEvent = {

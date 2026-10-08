@@ -11,6 +11,7 @@
     "test": "tsx --test \"src/**/*.test.ts\"",
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
+    "db:refresh-workflow": "tsx scripts/refresh-workflow.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio"
   },

@@ -53,17 +53,24 @@ export type Stage = "at_receiving" | "before_release";
 // Older stored configs may still say "warehouse" or "admin": both mean "anyone".
 export type RequirementOwner = "anyone" | "qc" | "warehouse" | "admin";
 
+// One F.WD.003 checklist question (spec §4.3). Answered Yes / No / N/A; a "No"
+// must be recorded as a defect with a class.
+export type InspectionQuestion = { key: string; label: string; group?: string };
+
 export type CategoryConfig = {
   specFields: SpecField[];
   requirements: Record<Stage, Requirement[]>;
   // checklist shown on each item of this category (e.g. spec sheet on file)
   itemRequirements: Requirement[];
+  // incoming-inspection checklist for this category (empty: no checklist configured)
+  inspectionChecklist: InspectionQuestion[];
 };
 
 const EMPTY: CategoryConfig = {
   specFields: [],
   requirements: { at_receiving: [], before_release: [] },
   itemRequirements: [],
+  inspectionChecklist: [],
 };
 
 export function parseCategoryConfig(json: string | null | undefined): CategoryConfig {
@@ -77,6 +84,7 @@ export function parseCategoryConfig(json: string | null | undefined): CategoryCo
         before_release: raw.requirements?.before_release ?? [],
       },
       itemRequirements: raw.itemRequirements ?? [],
+      inspectionChecklist: raw.inspectionChecklist ?? [],
     };
   } catch {
     return EMPTY;

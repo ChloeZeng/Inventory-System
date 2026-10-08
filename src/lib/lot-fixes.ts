@@ -5,8 +5,7 @@
 import type { FixInput, FixSpec, NextActionButton, OpenItem, RequirementGroup } from "@/components/detail/types";
 import { stageCounts, type CheckResult, type CheckSummary } from "./completeness";
 import { SEGREGATION } from "./constants";
-import type { LotProgress } from "./lot-progress";
-import type { SamplingPlan } from "./sampling";
+import type { Workflow } from "./workflow";
 
 // Current values of the editable fields, as form strings ("" when blank).
 export type LotFieldValues = Record<string, string>;
@@ -55,7 +54,7 @@ const CONFIRM: Record<string, string> = {
 
 export function lotFixSpec(r: CheckResult, ctx: Ctx): FixSpec {
   const { req } = r;
-  if (req.source === "inspection") return { kind: "tab", tab: "inspection", label: r.status === "followup" ? "Open" : "Start" };
+  if (req.source === "inspection") return { kind: "tab", tab: "inspection", label: r.status === "followup" ? "Open inspection" : "Enter inspection results" };
 
   if (req.source === "document") {
     const types = req.anyOf ?? (req.documentType ? [req.documentType] : []);
@@ -67,17 +66,20 @@ export function lotFixSpec(r: CheckResult, ctx: Ctx): FixSpec {
   const paths = req.anyOf ?? (req.path ? [req.path] : []);
   const field = fieldName(paths[0] ?? "");
 
+  const answer =
+    field === "qtyMatchesPackingList"
+      ? ({
+          kind: "answer",
+          field,
+          noteField: "qtyMatchNote",
+          question: "Does the total match the packing list / PO?",
+          value: (ctx.values[field] ?? "") as "" | "yes" | "no",
+          note: ctx.values.qtyMatchNote ?? "",
+        } as const)
+      : undefined;
   if (req.followUp && r.status === "followup")
-    return { kind: "resolve", question: `${req.label}: answered No`, note: ctx.values[fieldName(req.followUp.note ?? "")] ?? "" };
-  if (field === "qtyMatchesPackingList")
-    return {
-      kind: "answer",
-      field,
-      noteField: "qtyMatchNote",
-      question: "Does the total match the packing list / PO?",
-      value: (ctx.values[field] ?? "") as "" | "yes" | "no",
-      note: ctx.values.qtyMatchNote ?? "",
-    };
+    return { kind: "resolve", question: `${req.label}: answered No`, note: ctx.values[fieldName(req.followUp.note ?? "")] ?? "", correction: answer };
+  if (answer) return answer;
   if (CONFIRM[field]) return { kind: "confirm", field, statement: CONFIRM[field] };
 
   const inputs = paths.map((p) => inputFor(fieldName(p), ctx)).filter((i): i is FixInput => !!i);
@@ -123,67 +125,41 @@ export type NextAction = {
   tone: "action" | "ready" | "stop" | "quiet";
   primary?: NextActionButton;
   secondary?: NextActionButton;
+  waiting?: string; // who or what the lot is waiting for, when this user cannot act
 };
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+// The workflow's destination (?fix= / ?tab= / ?do=) as an in-page action on the lot page.
+function buttonFor(label: string, href: string | null): NextActionButton | undefined {
+  if (!href) return undefined;
+  const q = new URLSearchParams(href.split("?")[1] ?? "");
+  if (q.get("fix")) return { kind: "fix", key: q.get("fix")!, label };
+  if (q.get("tab")) return { kind: "tab", tab: q.get("tab")!, label };
+  const action = q.get("do");
+  if (action) return { kind: "do", name: action, label, qcOnly: action === "release" || action === "reject" };
+  return undefined;
+}
 
-export function lotNextAction(a: {
-  progress: LotProgress;
-  summary: CheckSummary;
-  plan: SamplingPlan | null;
-  balance: number;
-  released?: string; // formatted date
-  rejected?: string; // "on Oct 5 by QC Demo: reason"
-}): NextAction {
-  // the first thing to fix: blank/wrong answers before follow-ups, never the inspection itself
-  const open = a.summary.open.filter((r) => r.req.source !== "inspection");
-  const first = open.find((r) => r.status === "missing") ?? open[0];
-  const fixButton: NextActionButton | undefined = first && {
-    kind: "fix",
-    key: first.req.key,
-    label: `${first.status === "followup" ? "Resolve" : "Fix"}: ${first.req.label}`,
+// "What's next" on the lot page, from the shared workflow selector (src/lib/workflow.ts).
+export function lotNextAction(wf: Workflow, opts: { rejected?: string } = {}): NextAction {
+  const c = wf.current;
+  const tone: NextAction["tone"] =
+    wf.stage === "rejected" || wf.stage === "failed"
+      ? "stop"
+      : wf.stage === "released" || wf.stage === "depleted"
+        ? "quiet"
+        : wf.stage === "release" && !wf.releaseBlocked
+          ? "ready"
+          : "action";
+  // a QC-authorized user can reject a quarantined lot at any point
+  const secondary: NextActionButton | undefined =
+    wf.queues.inspection || (wf.queues.release && wf.stage !== "failed") || wf.stage === "receiving"
+      ? { kind: "do", name: "reject", label: "Reject lot", qcOnly: true }
+      : undefined;
+  return {
+    sentence: wf.stage === "rejected" && opts.rejected ? opts.rejected : c.sentence,
+    tone,
+    primary: c.canDo ? buttonFor(c.label, c.href) : undefined,
+    secondary,
+    waiting: c.canDo ? undefined : c.waitingFor,
   };
-  const rejectButton: NextActionButton = { kind: "do", name: "reject", label: "Reject lot", qcOnly: true };
-
-  switch (a.progress.next) {
-    case "finish_receiving": {
-      const n = open.filter((r) => r.stage === "at_receiving" && r.status === "missing").length;
-      return { sentence: `Receiving isn’t complete — ${plural(n, "answer")} missing.`, tone: "action", primary: fixButton };
-    }
-    case "inspect": {
-      const draw = !a.plan ? "" : a.plan.hundredPercent ? ` — inspect all ${a.plan.lotSize.toLocaleString()} units` : ` — draw ${a.plan.sampleSize.toLocaleString()} samples`;
-      return {
-        sentence: `Waiting for inspection${draw}.`,
-        tone: "action",
-        primary: { kind: "tab", tab: "inspection", label: "Start inspection" },
-        secondary: rejectButton,
-      };
-    }
-    case "reject":
-      return { sentence: "Inspection failed — the lot must be rejected.", tone: "stop", primary: rejectButton };
-    case "complete_missing":
-      return {
-        sentence: `Inspection approved — ${plural(a.summary.open.length, "item")} left before release.`,
-        tone: "action",
-        primary: fixButton,
-        secondary: rejectButton,
-      };
-    case "release":
-      return {
-        sentence: "Everything is complete — ready to release.",
-        tone: "ready",
-        primary: { kind: "do", name: "release", label: "Release lot", qcOnly: true },
-        secondary: rejectButton,
-      };
-    case "in_use":
-      return {
-        sentence: `Released${a.released ? ` on ${a.released}` : ""} — ${a.balance.toLocaleString()} units on hand.`,
-        tone: "quiet",
-        primary: { kind: "tab", tab: "history", label: "View transactions" },
-      };
-    case "used_up":
-      return { sentence: "Used up — nothing left on hand.", tone: "quiet", primary: { kind: "tab", tab: "history", label: "View history" } };
-    case "rejected":
-      return { sentence: `Rejected${a.rejected ? ` ${a.rejected}` : ""}. Do not use.`, tone: "stop", primary: { kind: "tab", tab: "history", label: "View history" } };
-  }
 }

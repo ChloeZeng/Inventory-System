@@ -9,6 +9,7 @@ import { evaluate } from "@/lib/completeness";
 import { nextItemCode, nextReceivingNo } from "@/lib/numbering";
 import { auditCreate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
+import { refreshLotWorkflow } from "@/lib/workflow";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
 import { SEGREGATION, SUPPLIER_TYPES } from "@/lib/constants";
 import { type ActionState, dateOnly, decimal, errorMessage, int, str, toDateInput, todayDateInput } from "@/lib/forms";
@@ -212,6 +213,7 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
       if (saved.photo) await createDocument(tx, user.id, saved.photo, "Photo", { lotId: lot.id });
       if (saved.packingList) await createDocument(tx, user.id, saved.packingList, "Packing list", { lotId: lot.id });
       if (saved.coa) await createDocument(tx, user.id, saved.coa, "COA", { lotId: lot.id });
+      await refreshLotWorkflow(tx, { id: lot.id });
       return lot.id;
     });
   } catch (e) {

@@ -1,304 +1,249 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { loadWorkQueue, type AreaStatus, type Readiness, type WorkLot, type WorkTask } from "@/lib/work-queue";
-import { buttonClass, formatDate } from "@/components/ui";
-import { QcAuthNote } from "@/components/qc-gate";
+import { ownerOfOpen } from "@/lib/completeness";
+import { itemChecklist, supplierChecklist } from "@/lib/records";
+import { QUEUES, type QueueKey } from "@/lib/workflow";
+import { QUEUE_KEYS, queueCounts, queueEntries, type ListFilters, type QueueEntry } from "@/lib/work-queries";
+import { buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
 import { HomeTour } from "@/components/home-tour";
 
-// Home = batch-focused work dashboard:
-//   1. title + workflow   2. status summaries (filters)   3. work list grouped by lot
-//   4. shortcuts           5. item / supplier records to complete (distinct from lots)
+// Home = "What needs my attention, and what can I do next?"
+// One active queue at a time, at most 10 entries, counted and filtered in the database.
+// Lots (the full list) and lot details (the full record) take over from here.
 
-const FILTERS = {
-  inspection: { label: "Awaiting inspection", hint: "Not inspected yet" },
-  release: { label: "Awaiting release", hint: "Inspection approved" },
-  blocked: { label: "Blocked", hint: "Release blocked by open tasks" },
-} as const;
-type Filter = keyof typeof FILTERS;
+const PAGE = 10;
 
-// Workflow order. They open lists or forms; none of them changes a lot by itself.
-const SHORTCUTS = [
-  { href: "/receive", label: "Receive delivery", hint: "Step-by-step receiving form" },
-  { href: "/lots?view=inspect", label: "Inspect lot", hint: "Lots not yet inspected" },
-  { href: "/lots?view=release", label: "Release lot", hint: "Lots ready for release review" },
-  { href: "/lots?view=usage", label: "Record usage", hint: "Released lots with stock · usage entry not built yet" },
-];
-
-export default async function HomePage({ searchParams }: { searchParams: Promise<{ tour?: string; filter?: string }> }) {
-  const { tour, filter: filterParam } = await searchParams;
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tour?: string; queue?: string; q?: string; category?: string; show?: string }>;
+}) {
+  const sp = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect("/welcome?step=who");
 
-  const queue = await loadWorkQueue(user);
-  const filter = (filterParam && filterParam in FILTERS ? filterParam : null) as Filter | null;
-  const visible = queue.lots.filter((l) =>
-    filter === "inspection" ? l.stage === "inspection" : filter === "release" ? l.stage === "release" : filter === "blocked" ? l.blocked : true,
-  );
-  const taskCount = visible.reduce((n, l) => n + l.tasks.length, 0);
-  // First visit for this user, or "Show tour again" (?tour=1).
-  const startTour = tour === "1" || !user.tourCompletedAt;
+  const filters: ListFilters = { q: sp.q?.trim() || undefined, categoryId: Number(sp.category) || undefined };
+  const [counts, categories] = await Promise.all([queueCounts(user, filters), prisma.category.findMany({ orderBy: { name: "asc" } })]);
+
+  // default: the first queue with work this user can do, else the first with any work
+  const requested = QUEUE_KEYS.find((k) => k === sp.queue);
+  const queue: QueueKey =
+    requested ?? QUEUE_KEYS.find((k) => counts[k].mine > 0) ?? QUEUE_KEYS.find((k) => counts[k].total > 0) ?? "inspection";
+  // "For you" (what this user can act on) by default when there is any; "All" includes work waiting on others
+  const mine = sp.show === "all" ? false : sp.show === "mine" ? true : counts[queue].mine > 0;
+  const entries = await queueEntries(queue, user, filters, PAGE, mine);
+  const total = counts[queue].total;
+  const shown = mine ? counts[queue].mine : total;
+
+  const qs = (extra: Record<string, string | undefined>) => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries({ q: filters.q, category: filters.categoryId ? String(filters.categoryId) : undefined, ...extra }))
+      if (v) p.set(k, v);
+    return p.toString();
+  };
+  const viewAll = `/lots?${qs({ view: QUEUES[queue].lotsView })}`;
+  const filtered = !!(filters.q || filters.categoryId);
+  const startTour = sp.tour === "1" || !user.tourCompletedAt;
 
   return (
     <>
-      <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight">Lots that need attention</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          <span className="font-medium text-slate-800">Receive → Quarantine → Inspect → Release → Use.</span> A lot stays in Quarantine
-          from receipt until QC releases or rejects it. Oldest deliveries are listed first.
-        </p>
+      <header data-tour="actions" className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">My work</h1>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/receive" className={buttonClass}>
+            Receive delivery
+          </Link>
+          <Link href="/lots?view=usage" className={secondaryButtonClass}>
+            Record usage
+          </Link>
+        </div>
       </header>
 
-      {/* 2. Status summaries — each one filters the work list */}
-      <section data-tour="summary" aria-label="Status summary" className="mb-5">
-        <div className="grid gap-3 sm:grid-cols-3">
-          {(Object.keys(FILTERS) as Filter[]).map((f) => {
-            const n = queue.counts[f];
-            const active = filter === f;
+      {/* Queue selector: task counts per queue (a lot can be in more than one) */}
+      <nav data-tour="queues" aria-label="Work queues" className="mb-4">
+        <ul className="flex flex-wrap gap-2">
+          {QUEUE_KEYS.map((k) => {
+            const active = k === queue;
+            const c = counts[k];
             return (
-              <Link
-                key={f}
-                href={active ? "/" : `/?filter=${f}`}
-                aria-current={active ? "true" : undefined}
-                className={`rounded-lg border bg-white px-4 py-3 shadow-sm transition hover:border-sky-400 ${
-                  active ? "border-sky-600 ring-2 ring-sky-600/30" : "border-slate-200"
-                }`}
-              >
-                <span className="flex items-baseline justify-between gap-2">
-                  <span className={`text-sm font-medium ${f === "blocked" && n ? "text-red-700" : "text-slate-700"}`}>{FILTERS[f].label}</span>
-                  <span className="text-2xl font-semibold tabular-nums">{n}</span>
-                </span>
-                <span className="mt-0.5 block text-xs text-slate-500">
-                  {n === 1 ? "lot" : "lots"} · {FILTERS[f].hint}
-                  {active && <span className="font-medium text-sky-700"> · filter on</span>}
-                </span>
-              </Link>
+              <li key={k}>
+                <Link
+                  href={`/?${qs({ queue: k })}`}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-baseline gap-2 rounded-lg border px-3 py-2 text-sm ${
+                    active ? "border-sky-700 bg-sky-50 text-sky-900" : "border-slate-200 bg-white text-slate-700 hover:border-sky-400"
+                  }`}
+                >
+                  <span className="font-medium">{QUEUES[k].label}</span>
+                  <span className="text-base font-semibold tabular-nums">{c.total}</span>
+                  <span className="text-xs text-slate-500">{c.mine} for you</span>
+                </Link>
+              </li>
             );
           })}
-        </div>
-        <p className="mt-2 text-xs text-slate-500">
-          Blocked lots are also counted under Awaiting release, so the cards do not add up to a total.
-          {queue.counts.failed > 0 &&
-            ` ${queue.counts.failed} ${queue.counts.failed === 1 ? "lot has failed inspection and awaits" : "lots have failed inspection and await"} rejection.`}
-        </p>
-      </section>
+        </ul>
+        <p className="mt-1 text-xs text-slate-500">Counts are tasks; one lot can appear in several queues.</p>
+      </nav>
 
-      {/* 3. Work list, grouped by lot */}
-      <section data-tour="worklist" aria-labelledby="worklist-title" className="mb-8">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h2 id="worklist-title" className="text-base font-semibold">
-            {filter ? FILTERS[filter].label : "All lots in quarantine"}
-            <span className="ml-2 font-normal text-slate-600">
-              {visible.length} {visible.length === 1 ? "lot" : "lots"} · {taskCount} open {taskCount === 1 ? "task" : "tasks"}
-            </span>
+      <form className="mb-3 flex flex-wrap items-center gap-2" role="search" aria-label="Filter the queue">
+        <input type="hidden" name="queue" value={queue} />
+        <input name="q" defaultValue={filters.q} placeholder="Item, item code or lot no." aria-label="Search" className={`${inputClass} max-w-xs`} />
+        <select name="category" defaultValue={filters.categoryId ?? ""} aria-label="Category" className={`${inputClass} max-w-[16rem]`}>
+          <option value="">All categories</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </select>
+        <button className={secondaryButtonClass}>Apply</button>
+        {filtered && (
+          <Link href={`/?${new URLSearchParams({ queue })}`} className="text-sm font-medium text-sky-700 hover:underline">
+            Clear filters
+          </Link>
+        )}
+      </form>
+
+      <section data-tour="worklist" aria-labelledby="queue-title" className="mb-8">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+          <h2 id="queue-title" className="text-sm font-semibold text-slate-700">
+            {QUEUES[queue].label}
           </h2>
-          {filter && (
-            <Link href="/" className="text-sm font-medium text-sky-700 hover:underline">
-              Clear filter — show all {queue.lots.length} {queue.lots.length === 1 ? "lot" : "lots"}
-            </Link>
-          )}
+          <div role="group" aria-label="Show" className="flex overflow-hidden rounded-md border border-slate-300 text-sm">
+            {[
+              { key: "mine", label: `For you (${counts[queue].mine})`, active: mine },
+              { key: "all", label: `All (${total})`, active: !mine },
+            ].map((o) => (
+              <Link
+                key={o.key}
+                href={`/?${qs({ queue, show: o.key })}`}
+                aria-current={o.active ? "true" : undefined}
+                className={`px-3 py-1 ${o.active ? "bg-sky-700 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+              >
+                {o.label}
+              </Link>
+            ))}
+          </div>
         </div>
-
-        {queue.lots.length === 0 ? (
-          <EmptyState>
-            No lots are in quarantine.{" "}
-            <Link href="/receive" className="font-medium text-sky-700 hover:underline">
-              Receive delivery
-            </Link>
-          </EmptyState>
-        ) : visible.length === 0 ? (
-          <EmptyState>
-            No lots match “{filter && FILTERS[filter].label}”.{" "}
-            <Link href="/" className="font-medium text-sky-700 hover:underline">
-              Clear filter
-            </Link>
-          </EmptyState>
+        {entries.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600">
+            {filtered
+              ? "No lots match these filters in this queue."
+              : mine && total > 0
+                ? `Nothing for you right now — ${total} waiting on others.`
+                : `Nothing in ${QUEUES[queue].label.toLowerCase()}.`}
+          </p>
         ) : (
-          <ul className="space-y-3">
-            {visible.map((lot) => (
-              <LotEntry key={lot.lotId} lot={lot} />
+          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white shadow-sm">
+            {entries.map((e) => (
+              <QueueRow key={e.lotId} entry={e} />
             ))}
           </ul>
         )}
+        {total > 0 && (
+          <p className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-600">
+            <span>
+              Showing {entries.length} of {shown.toLocaleString()}
+              {mine ? " you can act on" : ""} · oldest received first
+            </span>
+            <Link href={viewAll} className="font-medium text-sky-700 hover:underline">
+              View all {total.toLocaleString()} in Lots →
+            </Link>
+          </p>
+        )}
       </section>
 
-      {/* 4. Shortcuts — secondary, compact, in workflow order */}
-      <section data-tour="shortcuts" aria-labelledby="shortcuts-title" className="mb-8">
-        <h2 id="shortcuts-title" className="mb-2 text-sm font-semibold text-slate-700">
-          Shortcuts
-        </h2>
-        <ol className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {SHORTCUTS.map((s, i) => (
-            <li key={s.href}>
-              <Link
-                href={s.href}
-                className="flex h-full items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm hover:border-sky-400"
-              >
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-sky-50 text-xs font-semibold text-sky-800" aria-hidden>
-                  {i + 1}
-                </span>
-                <span className="min-w-0">
-                  <span className="block font-medium text-sky-800">{s.label}</span>
-                  <span className="block text-xs text-slate-500">{s.hint}</span>
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ol>
-      </section>
+      <MasterDataSection qcAuthorized={user.qcAuthorized} />
 
-      {/* 5. Item and supplier records — not lots, so listed apart */}
-      {queue.masterData.length > 0 && (
-        <section aria-labelledby="records-title" className="mb-4">
-          <h2 id="records-title" className="mb-2 text-sm font-semibold text-slate-700">
-            Item and supplier records to complete
-            <span className="ml-2 font-normal text-slate-500">{queue.masterData.length}</span>
-          </h2>
-          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm shadow-sm">
-            {queue.masterData.map((m) => (
-              <li key={`${m.kind}-${m.id}`} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2">
-                <span className="min-w-0">
-                  <span className="mr-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-600">{m.kind === "item" ? "Item" : "Supplier"}</span>
-                  <span className="font-medium">{m.title}</span>
-                  <span className="block text-xs text-slate-500">Missing: {m.missing.join(", ")}</span>
-                  {m.qcNote && <span className="block text-xs text-slate-500">{m.qcNote}</span>}
-                </span>
-                <Link href={m.href} className="text-sm font-medium text-sky-700 hover:underline">
-                  {m.kind === "item" ? "Complete item record" : "Complete supplier record"}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      <HomeTour key={tour === "1" ? "again" : "auto"} start={startTour} />
+      <HomeTour key={sp.tour === "1" ? "again" : "auto"} start={startTour} />
     </>
   );
 }
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-lg border border-dashed border-slate-300 bg-white px-4 py-8 text-center text-sm text-slate-600">{children}</p>;
+function daysAgo(d: Date) {
+  const days = Math.floor((Date.now() - d.getTime()) / 86_400_000);
+  return days <= 0 ? "received today" : days === 1 ? "received 1 day ago" : `received ${days} days ago`;
 }
 
-const READINESS: Record<Readiness, { label: string; icon: string; cls: string }> = {
-  ready: { label: "Ready", icon: "✓", cls: "border-emerald-300 bg-emerald-50 text-emerald-800" },
-  blocked: { label: "Blocked", icon: "✕", cls: "border-red-300 bg-red-50 text-red-800" },
-  pending: { label: "Pending", icon: "…", cls: "border-amber-300 bg-amber-50 text-amber-900" },
-};
-
-const AREA_TONE: Record<AreaStatus["tone"], string> = {
-  ok: "text-emerald-800",
-  open: "text-amber-800",
-  bad: "text-red-700",
-  neutral: "text-slate-700",
-};
-
-function LotEntry({ lot }: { lot: WorkLot }) {
-  const r = READINESS[lot.readiness];
+function QueueRow({ entry: e }: { entry: QueueEntry }) {
+  const t = e.task;
   return (
-    <li className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 p-4 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0 flex-1">
-          <h3 className="flex flex-wrap items-baseline gap-x-2 text-base font-semibold">
-            <Link href={`/lots/${lot.lotId}`} className="hover:underline">
-              {lot.itemName}
-            </Link>
-            <span className="font-mono text-sm font-normal text-slate-500">{lot.itemCode}</span>
-          </h3>
-          <p className="break-words text-sm text-slate-600">
-            Lot <span className="font-mono font-medium text-slate-800">{lot.lotLabel}</span> · {lot.receivingNo} · {lot.supplierName} · received{" "}
-            {formatDate(lot.dateReceived)}
-          </p>
-
-          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 font-medium text-amber-900">Quarantine</span>
-            <span className="rounded-full border border-slate-300 bg-slate-50 px-2 py-0.5 font-medium text-slate-800">{lot.stageLabel}</span>
-            <span className={`rounded-full border px-2 py-0.5 font-medium ${r.cls}`}>
-              <span aria-hidden>{r.icon} </span>
-              {r.label}
-            </span>
-          </div>
-
-          <p className="mt-2 text-sm text-slate-800">{lot.reason}</p>
-          {lot.dependencyNote && <p className="mt-0.5 text-xs text-slate-600">{lot.dependencyNote}</p>}
-
-          <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs">
-            {lot.areas.map((a) => (
-              <div key={a.label} className="flex gap-1">
-                <dt className="text-slate-500">{a.label}:</dt>
-                <dd className={`font-medium ${AREA_TONE[a.tone]}`}>{a.value}</dd>
-              </div>
-            ))}
-            {lot.sampling && (
-              <div className="flex gap-1">
-                <dt className="sr-only">Sampling</dt>
-                <dd className="text-slate-600">{lot.sampling}</dd>
-              </div>
-            )}
-          </dl>
-        </div>
-
-        <div className="flex shrink-0 flex-col items-start gap-1 md:items-end">
-          {lot.primary ? (
-            <Link href={lot.primary.href} className={`${buttonClass} text-center`}>
-              {lot.primary.label}
-            </Link>
-          ) : (
-            <p className="max-w-56 text-sm text-slate-600 md:text-right">No action for you right now.</p>
-          )}
-          <Link href={`/lots/${lot.lotId}`} className="text-xs font-medium text-sky-700 hover:underline">
-            Open lot details
-          </Link>
-        </div>
+    <li className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm">
+          <Link href={`/lots/${e.lotId}`} className="font-semibold text-slate-900 hover:underline">
+            {e.itemName}
+          </Link>{" "}
+          <span className="font-mono text-xs text-slate-500">{e.itemCode}</span>
+          <span className="text-slate-400"> · </span>
+          <span className="text-slate-600">
+            Lot <span className="font-mono">{e.lotLabel}</span>
+          </span>
+        </p>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+          {/* when the user can act, the button carries the task; otherwise say what it waits for */}
+          {!t.canDo && <span className="text-slate-600">{t.label}</span>}
+          {t.blocker && <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs text-amber-900">{t.blocker}</span>}
+          <span className="text-xs text-slate-500">{daysAgo(e.dateReceived)}</span>
+        </p>
       </div>
-
-      {lot.tasks.length > 0 && (
-        <details className="group border-t border-slate-100">
-          <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 [&::-webkit-details-marker]:hidden">
-            <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 transition-transform group-open:rotate-90" aria-hidden>
-              <path fillRule="evenodd" d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.17 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z" clipRule="evenodd" />
-            </svg>
-            <span className="group-open:hidden">Show</span>
-            <span className="hidden group-open:inline">Hide</span> {lot.tasks.length} open {lot.tasks.length === 1 ? "task" : "tasks"}
-            <span className="font-normal text-slate-500">— {[...new Set(lot.tasks.map((t) => t.area))].join(", ")}</span>
-          </summary>
-          <ul className="divide-y divide-slate-100 border-t border-slate-100">
-            {lot.tasks.map((t) => (
-              <TaskRow key={t.key} task={t} />
-            ))}
-          </ul>
-        </details>
-      )}
+      <div className="shrink-0">
+        {t.canDo && t.href ? (
+          <Link href={t.href} className={`${buttonClass} px-3 py-1.5`}>
+            {t.label}
+          </Link>
+        ) : (
+          <Link href={`/lots/${e.lotId}`} className={`${secondaryButtonClass} px-3 py-1.5`}>
+            View lot
+          </Link>
+        )}
+      </div>
     </li>
   );
 }
 
-function TaskRow({ task: t }: { task: WorkTask }) {
+// Item and supplier records: not lot work, so collapsed below the queue. Item
+// requirements that block a lot (e.g. a spec sheet) already appear in the lot queues.
+async function MasterDataSection({ qcAuthorized }: { qcAuthorized: boolean }) {
+  const [items, suppliers] = await Promise.all([
+    prisma.item.findMany({ where: { active: true }, include: { category: true, documents: { select: { type: true } } }, orderBy: { code: "asc" } }),
+    prisma.supplier.findMany({ where: { active: true }, include: { documents: { select: { type: true } } }, orderBy: { name: "asc" } }),
+  ]);
+  const records = [
+    ...items.flatMap((i) => {
+      const open = itemChecklist(i).open;
+      return open.length ? [{ key: `i${i.id}`, kind: "Item", title: `${i.code} ${i.name}`, missing: open.map((r) => r.req.label), href: `/items/${i.id}`, qcOnly: false }] : [];
+    }),
+    ...suppliers.flatMap((s) => {
+      const open = supplierChecklist(s).open;
+      return open.length
+        ? [{ key: `s${s.id}`, kind: "Supplier", title: s.name, missing: open.map((r) => r.req.label), href: `/suppliers/${s.id}`, qcOnly: open.some((r) => ownerOfOpen(r) === "qc") }]
+        : [];
+    }),
+  ];
+  if (!records.length) return null;
   return (
-    <li className="flex flex-col gap-1 px-4 py-2 text-sm sm:flex-row sm:items-center sm:gap-3">
-      <span className="flex shrink-0 gap-2 text-xs sm:w-44 sm:flex-col sm:gap-0">
-        <span className="text-slate-500">{t.area}</span>
-        <span className={`font-semibold ${t.status === "followup" ? "text-amber-800" : "text-red-700"}`}>
-          {t.status === "followup" ? "Needs follow-up" : "Missing"}
-        </span>
-      </span>
-      <span className="min-w-0 flex-1">
-        {t.canDo ? (
-          <Link href={t.href} className="font-medium text-sky-700 hover:underline">
-            {t.label}
-          </Link>
-        ) : (
-          <span className="inline-flex flex-col items-start gap-0.5">
-            <button type="button" disabled className="cursor-not-allowed text-left font-medium text-slate-500">
-              {t.label}
-            </button>
-            <QcAuthNote />
-          </span>
-        )}
-        {t.detail && <span className="block text-xs text-slate-500">{t.detail}</span>}
-      </span>
-      {t.ref && <span className="shrink-0 font-mono text-xs text-slate-500">{t.ref}</span>}
-    </li>
+    <details className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <summary className="cursor-pointer px-4 py-2 text-sm font-medium text-slate-700">
+        Item and supplier records to complete <span className="font-normal text-slate-500">({records.length})</span>
+      </summary>
+      <ul className="divide-y divide-slate-100 border-t border-slate-100 text-sm">
+        {records.map((r) => (
+          <li key={r.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-2">
+            <span className="min-w-0">
+              <span className="mr-2 text-xs text-slate-500">{r.kind}</span>
+              <span className="font-medium">{r.title}</span>
+              <span className="block text-xs text-slate-500">Missing: {r.missing.join(", ")}</span>
+              {r.qcOnly && !qcAuthorized && <span className="block text-xs text-slate-500">ASL approval requires QC authorization</span>}
+            </span>
+            <Link href={r.href} className="text-sm font-medium text-sky-700 hover:underline">
+              {r.kind === "Item" ? "Complete item record" : "Complete supplier record"}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

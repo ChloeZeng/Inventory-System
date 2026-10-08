@@ -59,6 +59,11 @@ export const TRANSACTION_TYPES = [
   { value: "adjustment", label: "Adjustment" },
 ] as const;
 
+// Usage entry (spec §4.5) takes stock out of a released lot. "receive" is written by
+// receiving; "adjustment" is left out because the spec does not define how or by whom
+// an adjustment (which may also add stock) is approved.
+export const USAGE_TYPES = ["production_use", "sample", "sent_to_client", "damaged_defect"] as const;
+
 export function transactionTypeLabel(value: string) {
   return TRANSACTION_TYPES.find((t) => t.value === value)?.label ?? value;
 }

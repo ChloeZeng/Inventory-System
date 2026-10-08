@@ -15,7 +15,7 @@ export type Facts = {
   supplier?: Record<string, unknown>;
   // document types on file, per record they are attached to
   documents: Partial<Record<"item" | "receipt" | "lot" | "supplier", string[]>>;
-  inspections?: { disposition: string }[];
+  inspections?: { disposition: string | null }[]; // confirmed inspections only
   // a rejected lot will never be released, so release paperwork no longer applies
   lotRejected?: boolean;
 };

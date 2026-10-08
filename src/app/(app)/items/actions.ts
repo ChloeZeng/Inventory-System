@@ -10,6 +10,7 @@ import { auditCreate, auditUpdate } from "@/lib/audit";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
 import { ITEM_DOCUMENT_TYPES } from "@/lib/constants";
 import { createDocument } from "@/lib/documents";
+import { refreshLotWorkflow } from "@/lib/workflow";
 import { type ActionState, bool, errorMessage, str } from "@/lib/forms";
 
 function readSpecs(config: CategoryConfig, formData: FormData) {
@@ -102,6 +103,7 @@ export async function updateItem(itemId: number, _prev: ActionState, formData: F
         reason: str(formData, "reason") ?? undefined,
       });
       if (n) await tx.item.update({ where: { id: item.id }, data: { ...after, specs: JSON.stringify(specs) } });
+      if (n) await refreshLotWorkflow(tx, { itemId: item.id });
       return n;
     });
     revalidatePath("/", "layout");
@@ -120,7 +122,10 @@ export async function uploadItemDocument(itemId: number, _prev: ActionState, for
     if (!(ITEM_DOCUMENT_TYPES as readonly string[]).includes(type)) return { error: "Unknown document type." };
 
     const saved = await saveUpload(file, "items");
-    await prisma.$transaction((tx) => createDocument(tx, user.id, saved, type, { itemId }));
+    await prisma.$transaction(async (tx) => {
+      await createDocument(tx, user.id, saved, type, { itemId });
+      await refreshLotWorkflow(tx, { itemId }); // e.g. a spec sheet unblocks this item's lots
+    });
     revalidatePath("/", "layout");
     return { ok: `Uploaded ${file.name}.` };
   } catch (e) {

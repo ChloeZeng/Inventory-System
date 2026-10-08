@@ -20,8 +20,14 @@ export const LOT_INCLUDE = {
   receipt: { include: { supplier: true, documents: docTypes } },
   location: true,
   documents: docTypes,
-  inspections: { orderBy: { inspectedAt: "asc" }, select: { id: true, disposition: true, inspectedAt: true } },
+  // only confirmed inspections count for requirements, release and queues; drafts are counted apart
+  inspections: {
+    where: { status: "final" },
+    orderBy: [{ confirmedAt: "asc" }, { id: "asc" }],
+    select: { id: true, disposition: true, inspectedAt: true, confirmedAt: true },
+  },
   transactions: { select: { qty: true } },
+  _count: { select: { inspections: { where: { status: "draft" } } } },
 } satisfies Prisma.LotInclude;
 
 export type LotWithFacts = Prisma.LotGetPayload<{ include: typeof LOT_INCLUDE }>;

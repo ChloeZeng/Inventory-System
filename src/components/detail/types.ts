@@ -15,7 +15,8 @@ export type FixSpec =
   | { kind: "confirm"; field: string; statement: string } // a yes/no that must be Yes
   | { kind: "answer"; field: string; noteField: string; question: string; value: "" | "yes" | "no"; note: string }
   | { kind: "upload"; target: "lot" | "item"; types: string[]; note?: string }
-  | { kind: "resolve"; question: string; note: string } // QC sign-off on a follow-up
+  // QC sign-off on a follow-up; `correction` lets anyone fix the recorded answer instead (with a reason)
+  | { kind: "resolve"; question: string; note: string; correction?: Extract<FixSpec, { kind: "answer" }> }
   | { kind: "tab"; tab: string; label: string } // handled on another tab (e.g. inspection)
   | { kind: "link"; href: string; label: string; message: string }; // handled on another page
 

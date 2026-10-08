@@ -86,3 +86,17 @@ export function samplingPlan(tables: AnsiTables, lotSize: number, inspectionLeve
     hundredPercent: sampleSize >= lotSize,
   };
 }
+
+export type DefectCounts = Record<(typeof DEFECT_CLASSES)[number]["cls"], number>;
+
+// Spec §4.3: any class with defects ≥ its Re → Rejected; every class ≤ its Ac → Approved.
+// Only a suggestion: the plan comes from seeded ANSI tables that QA must still verify,
+// and QC always confirms the disposition explicitly (an override needs a reason).
+export function calculatedDisposition(classes: Pick<ClassPlan, "cls" | "ac" | "re">[], defects: Partial<DefectCounts>) {
+  if (!classes.length) return null;
+  const counts = classes.map((c) => ({ c, n: defects[c.cls as keyof DefectCounts] }));
+  if (counts.some(({ n }) => n === undefined || !Number.isInteger(n) || n < 0)) return null;
+  if (counts.some(({ c, n }) => n! >= c.re)) return "Rejected" as const;
+  if (counts.every(({ c, n }) => n! <= c.ac)) return "Approved" as const;
+  return null;
+}

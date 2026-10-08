@@ -6,11 +6,15 @@ import { prisma } from "@/lib/prisma";
 import { requireQcAuthorized, requireUser } from "@/lib/current-user";
 import { releaseReadiness } from "@/lib/completeness";
 import { LOT_INCLUDE, lotStatus } from "@/lib/records";
-import { auditUpdate } from "@/lib/audit";
+import { refreshLotWorkflow } from "@/lib/workflow";
+import { parseCategoryConfig } from "@/lib/category-config";
+import { confirmErrors, defectCounts, readInspectionForm } from "@/lib/inspection";
+import { calculatedDisposition, loadAnsiTables, samplingPlan } from "@/lib/sampling";
+import { auditCreate, auditUpdate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
-import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION } from "@/lib/constants";
-import { type ActionState, bool, dateOnly, decimal, errorMessage, str } from "@/lib/forms";
+import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION, USAGE_TYPES } from "@/lib/constants";
+import { type ActionState, bool, dateOnly, decimal, errorMessage, int, str, toDateInput, todayDateInput } from "@/lib/forms";
 
 const LABELS: Record<string, string> = {
   poInvoiceNo: "PO / invoice no.",
@@ -120,6 +124,8 @@ export async function updateLotDetails(lotId: number, _prev: ActionState, formDa
         reason: reason ?? undefined,
       });
       if (l) await tx.lot.update({ where: { id: lot.id }, data: lotAfter });
+      // receipt fields are shared by every lot on the delivery
+      if (r || l) await refreshLotWorkflow(tx, { receiptId: lot.receiptId });
       return r + l;
     });
     revalidatePath("/", "layout");
@@ -152,6 +158,7 @@ export async function resolveQtyDifference(lotId: number, _prev: ActionState, fo
         reason: "Quantity difference resolved by QC",
       });
       await tx.receipt.update({ where: { id: lot.receiptId }, data: after });
+      await refreshLotWorkflow(tx, { receiptId: lot.receiptId });
     });
     revalidatePath("/", "layout");
     return { ok: "Difference resolved." };
@@ -184,6 +191,7 @@ export async function releaseLot(lotId: number, _prev: ActionState, formData: Fo
         reason: str(formData, "comment") ?? "Released by QC — all requirements met",
       });
       await tx.lot.update({ where: { id: lot.id }, data: after });
+      await refreshLotWorkflow(tx, { id: lot.id });
     });
     revalidatePath("/", "layout");
     return { ok: "Lot released." };
@@ -205,6 +213,7 @@ export async function rejectLot(lotId: number, _prev: ActionState, formData: For
     await prisma.$transaction(async (tx) => {
       await auditUpdate(tx, { userId: user.id, table: "Lot", recordId: lot.id, before: lot, after, reason });
       await tx.lot.update({ where: { id: lot.id }, data: after });
+      await refreshLotWorkflow(tx, { id: lot.id });
     });
     revalidatePath("/", "layout");
     return { ok: "Lot rejected." };
@@ -224,10 +233,153 @@ export async function uploadLotDocument(lotId: number, _prev: ActionState, formD
 
     const onReceipt = RECEIPT_DOCUMENT_TYPES.includes(type);
     const saved = await saveUpload(file, onReceipt ? "receipts" : "lots");
-    await prisma.$transaction((tx) => createDocument(tx, user.id, saved, type, onReceipt ? { receiptId: lot.receiptId } : { lotId }));
+    await prisma.$transaction(async (tx) => {
+      await createDocument(tx, user.id, saved, type, onReceipt ? { receiptId: lot.receiptId } : { lotId });
+      await refreshLotWorkflow(tx, onReceipt ? { receiptId: lot.receiptId } : { id: lotId });
+    });
     revalidatePath("/", "layout");
     return { ok: `Uploaded ${file.name}${onReceipt ? ` to ${lot.receipt.receivingNo}` : ""}.` };
   } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// ---- F.WD.003 inspection (spec §4.3) ---------------------------------------------------------
+// "draft": anyone may save results; nothing counts until confirmed.
+// "confirm": QC-authorized only; complete results and an explicit disposition. The plan's
+// calculated result is a suggestion — choosing otherwise needs a written reason.
+export async function saveInspection(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const intent = formData.get("intent") === "confirm" ? "confirm" : "draft";
+    const user = intent === "confirm" ? await requireQcAuthorized() : await requireUser();
+    const lot = await prisma.lot.findUniqueOrThrow({
+      where: { id: lotId },
+      include: { item: { include: { category: true } }, inspections: true },
+    });
+    if (lot.qcStatus !== "Quarantine") return { error: `This lot is already ${lot.qcStatus.toLowerCase()}.` };
+    if (lot.inspections.some((i) => i.status === "final")) return { error: "An inspection is already confirmed for this lot." };
+
+    const questions = parseCategoryConfig(lot.item.category.config).inspectionChecklist;
+    const { values, fieldErrors } = readInspectionForm(formData, questions);
+
+    let plan: ReturnType<typeof samplingPlan> | null = null;
+    if (lot.item.category.testPath === "ansi_sampling") {
+      try {
+        plan = samplingPlan(await loadAnsiTables(prisma), lot.qtyReceived);
+      } catch {
+        plan = null; // tables incomplete: no calculated suggestion
+      }
+    }
+    const calculated = plan ? calculatedDisposition(plan.classes, defectCounts(values)) : null;
+    const disposition = str(formData, "disposition");
+    const overrideReason = str(formData, "overrideReason");
+    if (intent === "confirm")
+      Object.assign(fieldErrors, confirmErrors(values, questions, { lotSize: lot.qtyReceived, disposition, calculated, overrideReason }));
+    if (Object.keys(fieldErrors).length)
+      return { error: intent === "confirm" ? "The inspection cannot be confirmed yet — fix the highlighted answers." : "Fix the highlighted fields.", fieldErrors };
+
+    const data = {
+      status: intent === "confirm" ? "final" : "draft",
+      lotSize: lot.qtyReceived,
+      codeLetter: plan?.codeLetter ?? null,
+      plan: JSON.stringify(plan?.classes ?? []),
+      sampleSize: plan?.sampleSize ?? null,
+      casesSampled: values.casesSampled,
+      itemsSampled: values.itemsSampled,
+      checklist: JSON.stringify(values.checklist),
+      criticalDefects: values.defects.critical ?? 0,
+      majorDefects: values.defects.major ?? 0,
+      minorDefects: values.defects.minor ?? 0,
+      defectNotes: values.defectNotes,
+      comments: values.comments,
+      calculatedDisposition: calculated,
+      disposition: intent === "confirm" ? disposition : null,
+      overrideReason: intent === "confirm" && disposition !== calculated ? overrideReason : null,
+      inspectedById: user.id,
+      inspectedAt: new Date(),
+      ...(intent === "confirm" ? { confirmedById: user.id, confirmedAt: new Date() } : {}),
+    };
+    // the plan snapshot is derived from the lot size; the time is in the log itself
+    const audited: Record<string, unknown> = { ...data };
+    delete audited.plan;
+    delete audited.inspectedAt;
+    const draft = lot.inspections.find((i) => i.status === "draft");
+    const reason = intent === "confirm" ? (data.overrideReason ?? "QC confirmed the inspection disposition") : undefined;
+
+    await prisma.$transaction(async (tx) => {
+      if (draft) {
+        await auditUpdate(tx, { userId: user.id, table: "Inspection", recordId: draft.id, before: draft, after: audited, reason });
+        await tx.inspection.update({ where: { id: draft.id }, data });
+      } else {
+        const created = await tx.inspection.create({ data: { ...data, lotId } });
+        await auditCreate(tx, { userId: user.id, table: "Inspection", recordId: created.id, values: { lotId, ...audited }, reason });
+      }
+      await refreshLotWorkflow(tx, { id: lotId });
+    });
+    revalidatePath("/", "layout");
+    return { ok: intent === "confirm" ? `Inspection confirmed: ${disposition}.` : "Draft saved. It does not count until QC confirms it." };
+  } catch (e) {
+    return { error: errorMessage(e) };
+  }
+}
+
+// ---- Usage entry (spec §4.5) -------------------------------------------------------------------
+// Takes stock out of a released lot. The balance is recalculated from the ledger inside the
+// transaction and the quantity may not exceed it. A form's clientRequestId makes a repeated
+// submission record the usage only once.
+export async function recordUsage(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireUser();
+    const fieldErrors: Record<string, string> = {};
+    const type = str(formData, "type") ?? "";
+    if (!(USAGE_TYPES as readonly string[]).includes(type)) fieldErrors.type = "Pick what the stock was used for.";
+    const qty = int(formData, "qty", 1);
+    if (!qty) fieldErrors.qty = "Enter a whole number of units (1 or more).";
+    const date = dateOnly(formData, "date");
+    if (!date) fieldErrors.date = "Enter the date of use.";
+    else if (toDateInput(date) > todayDateInput()) fieldErrors.date = "The date cannot be in the future.";
+    const productOrCustomer = str(formData, "productOrCustomer");
+    if (!productOrCustomer) fieldErrors.productOrCustomer = "Enter the product, customer or reference.";
+    const roomId = Number(formData.get("roomId")) || null;
+    const clientRequestId = str(formData, "clientRequestId");
+    if (!clientRequestId) return { error: "The form is out of date — reload the page and try again." };
+    if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
+
+    const result = await prisma.$transaction(async (tx) => {
+      if (await tx.inventoryTransaction.findUnique({ where: { clientRequestId } })) return { duplicate: true as const };
+      const lot = await tx.lot.findUniqueOrThrow({ where: { id: lotId }, include: { transactions: { select: { qty: true } } } });
+      if (lot.qcStatus !== "Released") throw new Error("Only released lots can be used.");
+      if (roomId && !(await tx.room.findFirst({ where: { id: roomId, locationId: lot.locationId } }))) throw new Error("Pick a room at the lot's location.");
+      const balance = lot.transactions.reduce((s, t) => s + t.qty, 0);
+      if (qty! > balance) return { overdraw: balance };
+
+      const values = {
+        lotId,
+        type,
+        qty: -qty!,
+        roomId,
+        productOrCustomer,
+        date: date!,
+        operatorId: user.id,
+        notes: str(formData, "notes"),
+        clientRequestId,
+      };
+      const txn = await tx.inventoryTransaction.create({ data: values });
+      const audited: Record<string, unknown> = { ...values };
+      delete audited.clientRequestId;
+      await auditCreate(tx, { userId: user.id, table: "InventoryTransaction", recordId: txn.id, values: audited });
+      await refreshLotWorkflow(tx, { id: lotId });
+      return { balance: balance - qty! };
+    });
+
+    if ("overdraw" in result)
+      return { error: "Not enough stock.", fieldErrors: { qty: `Only ${result.overdraw!.toLocaleString()} units on hand.` } };
+    revalidatePath("/", "layout");
+    if ("duplicate" in result) return { ok: "This usage was already recorded." };
+    return { ok: `Usage recorded. ${result.balance.toLocaleString()} units left.` };
+  } catch (e) {
+    // two submissions of the same form racing: the unique clientRequestId lets only one in
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: "This usage was already recorded." };
     return { error: errorMessage(e) };
   }
 }

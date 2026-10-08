@@ -18,12 +18,14 @@ export function NextActionCard({
   tone = "action",
   primary,
   secondary,
+  waiting,
   qcAuthorized,
 }: {
   sentence: React.ReactNode;
   tone?: keyof typeof TONES;
   primary?: NextActionButton;
   secondary?: NextActionButton;
+  waiting?: string; // shown instead of a primary button when someone else has to act
   qcAuthorized: boolean;
 }) {
   return (
@@ -31,6 +33,7 @@ export function NextActionCard({
       <div className="min-w-0">
         <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">What’s next</p>
         <p className="mt-0.5 text-lg font-medium leading-snug">{sentence}</p>
+        {waiting && !primary && <p className="mt-1 text-sm font-medium text-amber-800">Waiting for {waiting}</p>}
       </div>
       <div className="flex flex-wrap items-start gap-3">
         {secondary && <ActionButton button={secondary} qcAuthorized={qcAuthorized} className={secondaryButtonClass} />}

@@ -5,6 +5,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import type { CategoryConfig } from "../src/lib/category-config";
+import { refreshLotWorkflow } from "../src/lib/workflow";
 
 const prisma = new PrismaClient();
 
@@ -72,6 +73,21 @@ const LIDS_CONFIG: CategoryConfig = {
       { key: "inspection", label: "Incoming inspection", source: "inspection", task: "Inspect lot (F.WD.003)", ref: "F.WD.003", owner: "qc" },
     ],
   },
+  // F.WD.003 checklist (spec §4.3)
+  inspectionChecklist: [
+    { key: "sameMaterial", label: "Same material as standard?", group: "Form" },
+    { key: "colorMatches", label: "Color matches standard?", group: "Form" },
+    { key: "artworkMatches", label: "Artwork matches standard?", group: "Form" },
+    { key: "artworkLegible", label: "Artwork complete and legible?", group: "Form" },
+    { key: "packagingMatches", label: "Packaging matches QC standard?", group: "Form" },
+    { key: "sameSize", label: "Same size as standard?", group: "Fit" },
+    { key: "closureFits", label: "Closure and container fit?", group: "Fit" },
+    { key: "closureApplies", label: "Closure can be applied and removed?", group: "Function" },
+    { key: "mechanismWorks", label: "Container mechanism works?", group: "Function" },
+    { key: "labelAdhesive", label: "Label adhesive sufficient / releases cleanly?", group: "Function" },
+    { key: "tapeTest", label: "Tape test passed?", group: "Function" },
+    { key: "rubOffTest", label: "Rub-off test passed?", group: "Function" },
+  ],
   itemRequirements: [
     { key: "size", label: "Size", source: "field", path: "item.specs.size", ref: "Item master" },
     { key: "color", label: "Color", source: "field", path: "item.specs.color", ref: "Item master" },
@@ -84,6 +100,7 @@ const EMPTY_CONFIG: CategoryConfig = {
   specFields: [],
   requirements: { at_receiving: [], before_release: [] },
   itemRequirements: [],
+  inspectionChecklist: [],
 };
 
 // TODO: fill in spec fields / requirements / test path for the other categories.
@@ -262,6 +279,9 @@ async function main() {
     });
   }
 
+  // requirements may have changed: recompute every lot's workflow cache
+  const refreshed = await refreshLotWorkflow(prisma, {});
+
   const counts = {
     users: await prisma.user.count(),
     locations: await prisma.location.count(),
@@ -272,6 +292,7 @@ async function main() {
     ansiCodeLetters: await prisma.ansiCodeLetter.count(),
     ansiSampleSizes: await prisma.ansiSampleSize.count(),
     ansiPlans: await prisma.ansiPlan.count(),
+    lotsWorkflowRefreshed: refreshed,
   };
   console.log("Seed complete:", counts);
 }

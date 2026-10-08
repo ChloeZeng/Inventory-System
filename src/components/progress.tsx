@@ -6,7 +6,16 @@ import { fixButtonLabel, fixHrefFor, type FixContext } from "@/lib/records";
 import { Badge } from "@/components/ui";
 
 // Receive → Quarantine → Inspect → Release → In use
-export function Stepper({ states, captions }: { states: StepState[]; captions: (string | undefined)[] }) {
+// Saved workflow state only. `hrefs` lets a stage open its section; clicking never changes status.
+export function Stepper({
+  states,
+  captions,
+  hrefs,
+}: {
+  states: StepState[];
+  captions: (string | undefined)[];
+  hrefs?: (string | undefined)[];
+}) {
   return (
     <ol className="grid grid-cols-5 gap-1 text-center text-xs sm:text-sm">
       {LOT_STEPS.map((label, i) => {
@@ -20,18 +29,30 @@ export function Stepper({ states, captions }: { states: StepState[]; captions: (
                 ? "border-red-600 bg-red-600 text-white shadow"
                 : "border-slate-200 bg-white text-slate-400";
         return (
-          <li key={label} className={`rounded-md border-2 px-2 py-2 ${tone}`} aria-current={s === "current" ? "step" : undefined}>
-            <div className="font-semibold">
-              {s === "done" ? "✓ " : s === "failed" ? "✕ " : `${i + 1}. `}
-              {label}
-            </div>
-            {captions[i] && (
-              <div className={`mt-0.5 truncate ${s === "current" || s === "failed" ? "text-white/90" : "opacity-80"}`}>{captions[i]}</div>
-            )}
+          <li key={label} className={`rounded-md border-2 ${tone}`} aria-current={s === "current" ? "step" : undefined}>
+            <StepBody href={hrefs?.[i]}>
+              <div className="font-semibold">
+                {s === "done" ? "✓ " : s === "failed" ? "✕ " : `${i + 1}. `}
+                {label}
+              </div>
+              {captions[i] && (
+                <div className={`mt-0.5 truncate ${s === "current" || s === "failed" ? "text-white/90" : "opacity-80"}`}>{captions[i]}</div>
+              )}
+            </StepBody>
           </li>
         );
       })}
     </ol>
+  );
+}
+
+function StepBody({ href, children }: { href?: string; children: React.ReactNode }) {
+  return href ? (
+    <Link href={href} scroll={false} className="block px-2 py-2 hover:underline">
+      {children}
+    </Link>
+  ) : (
+    <div className="px-2 py-2">{children}</div>
   );
 }
 
