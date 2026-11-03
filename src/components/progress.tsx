@@ -67,7 +67,7 @@ export function CompletionBar({ summary, compact = false }: { summary: CheckSumm
             ? `${summary.met}/${summary.total} ${summary.total === 1 ? "requirement" : "requirements"} met`
             : `${summary.met} of ${summary.total} ${summary.total === 1 ? "requirement" : "requirements"} met`}
         </span>
-        {!compact && summary.complete && <Badge tone="green">Audit ready</Badge>}
+        {!compact && summary.complete && <Badge tone="green">Record complete</Badge>}
       </div>
       <div className={`mt-1 overflow-hidden rounded-full bg-slate-200 ${compact ? "h-1.5" : "h-2.5"}`}>
         <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />

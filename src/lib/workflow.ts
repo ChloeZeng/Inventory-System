@@ -9,7 +9,7 @@
 // so they cannot disagree.
 
 import type { Prisma } from "@prisma/client";
-import { formatQty, type Requirement } from "./category-config";
+import { formatQty, itemUnit, type Requirement } from "./category-config";
 import { ownerOfOpen, type CheckResult, type CheckSummary } from "./completeness";
 import { LOT_INCLUDE, fixHrefFor, lotStatus } from "./records";
 import { plural } from "./text";
@@ -273,7 +273,7 @@ export function workflowInputFromLot(lot: Parameters<typeof lotStatus>[0]): Work
     lastInspection,
     hasDraft: lot._count.inspections > 0,
     balance,
-    unit: lot.item.category.unit,
+    unit: itemUnit(lot.item),
   };
 }
 

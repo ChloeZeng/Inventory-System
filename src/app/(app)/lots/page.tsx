@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { categoryLabel, formatQty } from "@/lib/category-config";
+import { categoryLabel, formatQty, itemUnit } from "@/lib/category-config";
 import { plural } from "@/lib/text";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
@@ -135,7 +135,7 @@ export default async function LotsPage({
             <td className="whitespace-nowrap px-4 py-2">{formatDate(lot.receipt.dateReceived)}</td>
             <td className="px-4 py-2 tabular-nums">
               {wf.balance.toLocaleString()}
-              <div className="text-xs text-slate-500">of {formatQty(lot.qtyReceived, lot.item.category.unit)}</div>
+              <div className="text-xs text-slate-500">of {formatQty(lot.qtyReceived, itemUnit(lot.item))}</div>
             </td>
             <td className="px-4 py-2">
               <QcStatusBadge status={lot.qcStatus} />

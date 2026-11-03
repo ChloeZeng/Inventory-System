@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { categoryLabel, formatQty, parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
+import { categoryLabel, formatQty, itemSettings, parseSpecs, formatSpecs } from "@/lib/category-config";
 import { plural } from "@/lib/text";
+import { lotLedger } from "@/lib/stock";
 import { LOT_DOCUMENT_TYPES, USAGE_TYPES, segregationLabel, supplierTypeLabel, testPathLabel, transactionTypeLabel, usesAnsiSampling } from "@/lib/constants";
 import { releaseReadiness } from "@/lib/completeness";
 import { toDateInput, todayDateInput } from "@/lib/forms";
@@ -15,7 +16,7 @@ import { lotNextAction, lotRequirementGroups, type LotFieldValues } from "@/lib/
 import { InspectionForm } from "../inspection-form";
 import { InspectionResult } from "../inspection-result";
 import { UsageForm } from "../usage-form";
-import { Badge, Card, Table, formatDate, formatDateTime, formatMoney, secondaryButtonClass } from "@/components/ui";
+import { Card, Table, formatDate, formatDateTime, formatMoney, secondaryButtonClass } from "@/components/ui";
 import { Stepper } from "@/components/progress";
 import { UploadForm } from "@/components/upload-form";
 import { AuditHistory } from "@/components/audit-history";
@@ -72,8 +73,11 @@ export default async function LotDetailPage({
   ]);
 
   const { summary, balance, progress, lastInspection } = lotStatus(lot);
-  const config = parseCategoryConfig(lot.item.category.config);
-  const unit = lot.item.category.unit;
+  const settings = itemSettings(lot.item.category, lot.item.subType);
+  // received − used − loss − scrap ± count adjustment (the balance itself comes from the same ledger)
+  const ledger = lotLedger(details.transactions);
+  const config = settings.config;
+  const unit = settings.unit;
   const label = lotLabel(lot);
   const unitCost = lot.unitCost ? Number(lot.unitCost) : null;
   const release = releaseReadiness(summary);
@@ -82,7 +86,7 @@ export default async function LotDetailPage({
   let plan: ReturnType<typeof samplingPlan> | null = null;
   let planError: string | null = null;
   try {
-    if (usesAnsiSampling(lot.item.category.testPath)) plan = samplingPlan(tables, lot.qtyReceived);
+    if (usesAnsiSampling(settings.testPath)) plan = samplingPlan(tables, lot.qtyReceived);
   } catch (e) {
     planError = e instanceof Error ? e.message : String(e);
   }
@@ -303,7 +307,16 @@ export default async function LotDetailPage({
         </Card>
         <Card title="Balance and cost">
           <dl className="space-y-2 text-sm">
-            <Row label="Received">{formatQty(lot.qtyReceived, unit)}</Row>
+            <Row label="Received">{formatQty(ledger.received, unit)}</Row>
+            {ledger.used > 0 && <Row label="Used">− {formatQty(ledger.used, unit)}</Row>}
+            {ledger.loss > 0 && <Row label="Loss">− {formatQty(ledger.loss, unit)}</Row>}
+            {ledger.scrap > 0 && <Row label="Scrap">− {formatQty(ledger.scrap, unit)}</Row>}
+            {ledger.countAdjustment !== 0 && (
+              <Row label="Count adjustment">
+                {ledger.countAdjustment > 0 ? "+ " : "− "}
+                {formatQty(Math.abs(ledger.countAdjustment), unit)}
+              </Row>
+            )}
             <Row label="Balance on hand">{formatQty(balance, unit)}</Row>
             <Row label="Unit cost">{unitCost !== null ? formatMoney(unitCost) : <span className="text-amber-700">not entered</span>}</Row>
             <Row label="Lot value received">{unitCost !== null ? formatMoney(unitCost * lot.qtyReceived, 2) : "—"}</Row>
@@ -416,18 +429,18 @@ export default async function LotDetailPage({
 
       <Card title="Inspection (F.WD.003)">
         {finalInspection ? (
-          <InspectionResult inspection={finalInspection} questions={config.inspectionChecklist} />
+          <InspectionResult inspection={finalInspection} questions={settings.inspectionChecklist} />
         ) : lot.qcStatus !== "Quarantine" ? (
           <p className="text-sm text-slate-600">No confirmed inspection is recorded for this lot.</p>
         ) : !wf.inspectionRequired ? (
           <p className="text-sm text-slate-600">
             No incoming inspection is configured for {categoryLabel(lot.item.category)}
-            {testPathLabel(lot.item.category.testPath) && <> — its testing path is {testPathLabel(lot.item.category.testPath)!.toLowerCase()}</>}.
+            {testPathLabel(settings.testPath) && <> — its testing path is {testPathLabel(settings.testPath)!.toLowerCase()}</>}.
           </p>
         ) : user ? (
           <InspectionForm
             action={saveInspection.bind(null, lot.id)}
-            questions={config.inspectionChecklist}
+            questions={settings.inspectionChecklist}
             plan={plan && { classes: plan.classes, sampleSize: plan.sampleSize, lotSize: plan.lotSize, hundredPercent: plan.hundredPercent }}
             qcAuthorized={isQc}
             draft={
@@ -471,7 +484,7 @@ export default async function LotDetailPage({
                   <td className="px-4 py-2">{t.room?.name ?? "—"}</td>
                   <td className="px-4 py-2">{t.productOrCustomer ?? "—"}</td>
                   <td className="px-4 py-2">{t.operator.name}</td>
-                  <td className="px-4 py-2 text-slate-600">{t.notes}</td>
+                  <td className="px-4 py-2 text-slate-600">{[t.reason && `Reason: ${t.reason}`, t.notes].filter(Boolean).join(" · ")}</td>
                 </tr>,
               );
               return acc;
@@ -526,8 +539,8 @@ export default async function LotDetailPage({
         }
         badges={
           <>
+            {/* a lot's status is its QC status only: Quarantine / Released / Rejected */}
             <QcStatusBadge status={lot.qcStatus} />
-            {summary.complete && <Badge tone="green">Audit ready</Badge>}
           </>
         }
         meta={

@@ -41,7 +41,7 @@ export default async function SupplierDetailPage({
             {supplier.name}
             {supplier.aslApproved ? <Badge tone="green">ASL approved</Badge> : <Badge tone="red">not ASL approved</Badge>}
             {!supplier.active && <Badge>inactive</Badge>}
-            {checklist.complete && <Badge tone="green">Audit ready</Badge>}
+            {checklist.complete && <Badge tone="green">Record complete</Badge>}
           </span>
         }
         subtitle={supplierTypeLabel(supplier.type)}

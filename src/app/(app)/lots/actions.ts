@@ -7,14 +7,15 @@ import { requireQcAuthorized, requireUser } from "@/lib/current-user";
 import { releaseReadiness } from "@/lib/completeness";
 import { LOT_INCLUDE, lotStatus } from "@/lib/records";
 import { refreshLotWorkflow } from "@/lib/workflow";
-import { formatQty, parseCategoryConfig } from "@/lib/category-config";
+import { formatQty, itemSettings, itemUnit } from "@/lib/category-config";
 import { differsFromDedicated } from "@/lib/item-fields";
 import { confirmErrors, defectCounts, readInspectionForm } from "@/lib/inspection";
 import { calculatedDisposition, loadAnsiTables, samplingPlan } from "@/lib/sampling";
 import { auditCreate, auditUpdate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
-import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION, USAGE_TYPES, usesAnsiSampling } from "@/lib/constants";
+import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION, USAGE_TYPES, transactionTypeLabel, usesAnsiSampling } from "@/lib/constants";
+import { applyStockChange } from "@/lib/stock-change";
 import { type ActionState, bool, dateOnly, decimal, errorMessage, int, str, toDateInput, todayDateInput } from "@/lib/forms";
 
 const LABELS: Record<string, string> = {
@@ -260,11 +261,12 @@ export async function saveInspection(lotId: number, _prev: ActionState, formData
     if (lot.qcStatus !== "Quarantine") return { error: `This lot is already ${lot.qcStatus.toLowerCase()}.` };
     if (lot.inspections.some((i) => i.status === "final")) return { error: "An inspection is already confirmed for this lot." };
 
-    const questions = parseCategoryConfig(lot.item.category.config).inspectionChecklist;
+    const settings = itemSettings(lot.item.category, lot.item.subType);
+    const questions = settings.inspectionChecklist;
     const { values, fieldErrors } = readInspectionForm(formData, questions);
 
     let plan: ReturnType<typeof samplingPlan> | null = null;
-    if (usesAnsiSampling(lot.item.category.testPath)) {
+    if (usesAnsiSampling(settings.testPath)) {
       try {
         plan = samplingPlan(await loadAnsiTables(prisma), lot.qtyReceived);
       } catch {
@@ -351,7 +353,7 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
       if (await tx.inventoryTransaction.findUnique({ where: { clientRequestId } })) return { duplicate: true as const };
       const lot = await tx.lot.findUniqueOrThrow({
         where: { id: lotId },
-        include: { transactions: { select: { qty: true } }, item: { select: { dedicatedProduct: true, category: { select: { unit: true } } } } },
+        include: { transactions: { select: { qty: true } }, item: { select: { dedicatedProduct: true, subType: true, category: true } } },
       });
       if (lot.qcStatus !== "Released") throw new Error("Only released lots can be used.");
       // An item reserved for one product: production use for another product needs a reason.
@@ -360,7 +362,7 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
       if (otherProduct && !productReason) return { needsReason: dedicated! };
       if (roomId && !(await tx.room.findFirst({ where: { id: roomId, locationId: lot.locationId } }))) throw new Error("Pick a room at the lot's location.");
       const balance = lot.transactions.reduce((s, t) => s + t.qty, 0);
-      if (qty! > balance) return { overdraw: balance, unit: lot.item.category.unit };
+      if (qty! > balance) return { overdraw: balance, unit: itemUnit(lot.item) };
 
       const values = {
         lotId,
@@ -371,6 +373,7 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
         date: date!,
         operatorId: user.id,
         notes: str(formData, "notes"),
+        reason: otherProduct ? productReason : null, // why another product than the dedicated one
         clientRequestId,
       };
       const txn = await tx.inventoryTransaction.create({ data: values });
@@ -379,7 +382,7 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
       const reason = otherProduct ? `Used for ${productOrCustomer} instead of dedicated product ${dedicated}: ${productReason}` : undefined;
       await auditCreate(tx, { userId: user.id, table: "InventoryTransaction", recordId: txn.id, values: audited, reason });
       await refreshLotWorkflow(tx, { id: lotId });
-      return { balance: balance - qty!, unit: lot.item.category.unit };
+      return { balance: balance - qty!, unit: itemUnit(lot.item) };
     });
 
     if ("needsReason" in result)
@@ -395,6 +398,41 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
   } catch (e) {
     // two submissions of the same form racing: the unique clientRequestId lets only one in
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: "This usage was already recorded." };
+    return { error: errorMessage(e) };
+  }
+}
+
+// ---- Loss, scrap, count adjustment ---------------------------------------------------------------
+// Stock changes outside normal use; each needs a reason, stored on the transaction and in the
+// audit trail. The balance is recalculated from the ledger inside the transaction and can never
+// go below 0. Allowed in any QC status (e.g. scrapping a rejected lot). The form's
+// clientRequestId makes a repeated submission record the change only once.
+export async function recordStockChange(lotId: number, _prev: ActionState, formData: FormData): Promise<ActionState> {
+  try {
+    const user = await requireUser();
+    const clientRequestId = str(formData, "clientRequestId");
+    if (!clientRequestId) return { error: "The form is out of date — reload the page and try again." };
+    // default: today (a calendar date stored as UTC midnight)
+    const date = dateOnly(formData, "date") ?? new Date(`${todayDateInput()}T00:00:00.000Z`);
+    if (toDateInput(date) > todayDateInput()) return { error: "The date cannot be in the future.", fieldErrors: { date: "Not in the future." } };
+
+    const result = await applyStockChange(prisma, {
+      lotId,
+      userId: user.id,
+      type: str(formData, "type"),
+      qty: str(formData, "qty"),
+      reason: str(formData, "reason"),
+      notes: str(formData, "notes"),
+      date,
+      clientRequestId,
+    });
+
+    if ("fieldErrors" in result) return { error: "Please fix the highlighted fields.", fieldErrors: result.fieldErrors };
+    revalidatePath("/", "layout");
+    if ("duplicate" in result) return { ok: "This change was already recorded." };
+    return { ok: `${transactionTypeLabel(result.type!)} recorded. ${formatQty(result.balance!, result.unit)} left.` };
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: "This change was already recorded." };
     return { error: errorMessage(e) };
   }
 }

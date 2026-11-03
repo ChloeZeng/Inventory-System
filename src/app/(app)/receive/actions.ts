@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
-import { itemCodePrefix, parseCategoryConfig, parseSpecs, sameSpecs } from "@/lib/category-config";
+import { itemCodePrefix, itemSettings, parseCategoryConfig, parseSpecs, sameSpecs } from "@/lib/category-config";
 import { readItemExtras } from "@/lib/item-fields";
 import { evaluate } from "@/lib/completeness";
 import { nextItemCode, nextReceivingNo } from "@/lib/numbering";
@@ -91,12 +91,13 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
     const cases = int(formData, "cases", 1);
     const unitsPerCase = int(formData, "unitsPerCase", 1);
     if (!cases) fieldErrors.cases = "Enter the number of cases (1 or more).";
-    if (!unitsPerCase) fieldErrors.unitsPerCase = `Enter ${category.unit} per case (1 or more).`;
+    const settings = itemSettings(category, existingItem ? existingItem.subType : subType);
+    if (!unitsPerCase) fieldErrors.unitsPerCase = `Enter ${settings.unit} per case (1 or more).`;
     const calculated = (cases ?? 0) * (unitsPerCase ?? 0);
     const qtyReceived = int(formData, "qtyReceived", 1) ?? calculated;
     const qtyOverrideReason = qtyReceived !== calculated ? str(formData, "qtyOverrideReason") : null;
     if (qtyReceived !== calculated && !qtyOverrideReason)
-      fieldErrors.qtyOverrideReason = `Total differs from ${calculated.toLocaleString()} (cases × ${category.unit} per case) — give a reason.`;
+      fieldErrors.qtyOverrideReason = `Total differs from ${calculated.toLocaleString()} (cases × ${settings.unit} per case) — give a reason.`;
 
     const unitCost = decimal(formData, "unitCost");
     if (unitCost === "invalid") fieldErrors.unitCost = "Enter a number, e.g. 0.0125";
@@ -125,7 +126,7 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
       segregation,
       quarantineStickerApplied: formData.get("quarantineSticker") === "on",
     };
-    const missing = evaluate("at_receiving", config.requirements.at_receiving, {
+    const missing = evaluate("at_receiving", settings.requirements.at_receiving, {
       item: { specs: existingItem ? parseSpecs(existingItem.specs) : newSpecs },
       receipt: existingReceipt ?? draftReceipt!,
       lot: { supplierBatchNo, lotNo, cases, unitsPerCase, locationId: location!.id },

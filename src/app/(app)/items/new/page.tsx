@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { categoryLabel, itemCodePrefix, parseCategoryConfig } from "@/lib/category-config";
+import { categoryLabel, codePatterns, itemCodePrefix, parseCategoryConfig } from "@/lib/category-config";
 import { getCurrentUser } from "@/lib/current-user";
 import { plural } from "@/lib/text";
 import { Card, PageHeader } from "@/components/ui";
@@ -27,7 +27,7 @@ export default async function NewItemPage({ searchParams }: { searchParams: Prom
               <Link key={c.id} href={`/items/new?category=${c.id}`} className={choiceClass}>
                 <div className="font-medium">{categoryLabel(c)}</div>
                 <div className="font-mono text-sm text-slate-500">
-                  {config.subTypes.length ? config.subTypes.map((t) => `${t.codePrefix}-###`).join(" / ") : `${c.codePrefix}-###`}
+                  {codePatterns(c, config).join(" / ")}
                 </div>
               </Link>
             );
@@ -53,7 +53,7 @@ export default async function NewItemPage({ searchParams }: { searchParams: Prom
           {config.subTypes.map((t) => (
             <Link key={t.key} href={`/items/new?category=${category.id}&subType=${t.key}`} className={choiceClass}>
               <div className="font-medium">{t.label}</div>
-              <div className="font-mono text-sm text-slate-500">{t.codePrefix}-###</div>
+              <div className="font-mono text-sm text-slate-500">{t.codePrefix ?? category.codePrefix}-###</div>
             </Link>
           ))}
         </div>

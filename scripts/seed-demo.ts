@@ -21,6 +21,7 @@ import { nextReceivingNo } from "../src/lib/numbering";
 import { refreshLotWorkflow } from "../src/lib/workflow";
 import { loadAnsiTables, samplingPlan } from "../src/lib/sampling";
 import { UPLOAD_ROOT } from "../src/lib/uploads";
+import { itemSettings } from "../src/lib/category-config";
 import { DEMO_USERS, upsertAnsiTables, upsertCategories, upsertLocations, CATEGORIES } from "../prisma/catalog";
 import { demoPdf, demoPng } from "./demo-files";
 
@@ -60,7 +61,7 @@ type ItemSeed = {
   category: string; // form no.
   subType?: string;
   name: string;
-  specs: { size?: string; material?: string; color?: string };
+  specs: { size?: string; material?: string; color?: string; labelVersion?: string };
   owner?: string;
   dedicatedProduct?: string;
   supplier?: string;
@@ -73,9 +74,11 @@ const ITEMS: ItemSeed[] = [
   { code: "RM-001", category: "F.IV.001", name: "Milk Thistle Extract 80%", specs: { size: "80% silymarin", material: "Milk thistle seed extract", color: "Yellow-brown powder" }, supplier: "Demo Ingredients Co." },
   { code: "RM-002", category: "F.IV.001", name: "Ascorbic Acid USP", specs: { size: "USP", material: "Ascorbic acid (vitamin C)", color: "White powder" }, supplier: "Demo Ingredients Co." },
   { code: "RM-003", category: "F.IV.001", name: "Microcrystalline Cellulose PH-102", specs: { size: "PH-102", material: "Microcrystalline cellulose", color: "White powder" }, supplier: "Demo Ingredients Co." },
-  // F.IV.002 Capsule Shells
-  { code: "C-CAP-001", category: "F.IV.002", name: "Capsule Size 0 HPMC White", specs: { size: "Size 0", material: "HPMC", color: "White" }, supplier: "Demo Packaging Co." },
-  { code: "C-CAP-002", category: "F.IV.002", name: "Capsule Size 00 Gelatin Clear", specs: { size: "Size 00", material: "Gelatin", color: "Clear" }, supplier: "Demo Packaging Co." },
+  // F.IV.002 Capsules — empty shells (pcs, COA + ANSI) and finished capsules (capsules, lab tests)
+  { code: "C-CAP-001", category: "F.IV.002", subType: "emptyShell", name: "Empty shell Size 0 HPMC White", specs: { size: "Size 0", material: "HPMC", color: "White" }, supplier: "Demo Packaging Co." },
+  { code: "C-CAP-002", category: "F.IV.002", subType: "emptyShell", name: "Empty shell Size 00 Gelatin Clear", specs: { size: "Size 00", material: "Gelatin", color: "Clear" }, supplier: "Demo Packaging Co." },
+  { code: "C-CAP-003", category: "F.IV.002", subType: "finishedCapsule", name: "Milk Thistle 500mg capsule", specs: { size: "Size 0", material: "Milk thistle extract 500mg", color: "Brown / white" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Demo Ingredients Co." },
+  { code: "C-CAP-004", category: "F.IV.002", subType: "finishedCapsule", name: "Ashwagandha 400mg capsule", specs: { size: "Size 1", material: "Ashwagandha root extract 400mg", color: "Green / white" }, supplier: "Demo Ingredients Co." },
   // F.IV.003 Bottles — C-BOT-001 is a real example
   { code: "C-BOT-001", category: "F.IV.003", name: "Bottle 150ml PET Amber", specs: { size: "150ml", material: "PET", color: "Amber" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Shenzhenshi LiQi" },
   { code: "C-BOT-002", category: "F.IV.003", name: "Bottle 150ml HDPE White", specs: { size: "150ml", material: "HDPE", color: "White" }, supplier: "Demo Packaging Co." },
@@ -85,8 +88,8 @@ const ITEMS: ItemSeed[] = [
   { code: "C-LID-002", category: "F.IV.004", name: "Lid 45mm White PP", specs: { size: "45mm", material: "PP", color: "White" }, supplier: "Demo Packaging Co." },
   { code: "C-LID-010", category: "F.IV.004", name: "Lid 38mm White PP", specs: { size: "38mm", material: "PP", color: "White" }, supplier: "HongKong Tao Nutrition Health Science Company", legacyCode: "C-Lids-010-38mm" },
   // F.IV.005 Labels
-  { code: "C-LBL-001", category: "F.IV.005", name: "EGUOO Milk Thistle front label", specs: { size: "2 × 3 in", material: "White BOPP", color: "4-color" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Demo Packaging Co." },
-  { code: "C-LBL-002", category: "F.IV.005", name: "Lot / expiry label", specs: { size: "1 × 4 in", material: "Paper", color: "Black on white" }, supplier: "Demo Packaging Co." },
+  { code: "C-LBL-001", category: "F.IV.005", name: "EGUOO Milk Thistle front label", specs: { size: "2 × 3 in", material: "White BOPP", color: "4-color", labelVersion: "v3 (2026-09)" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Demo Packaging Co." },
+  { code: "C-LBL-002", category: "F.IV.005", name: "Lot / expiry label", specs: { size: "1 × 4 in", material: "Paper", color: "Black on white", labelVersion: "v1" }, supplier: "Demo Packaging Co." },
   // F.IV.006 Shipper Packs
   { code: "C-SP-001", category: "F.IV.006", name: "Shipper 12 × 9 × 8 in", specs: { size: "12 × 9 × 8 in", material: "Corrugated 32 ECT", color: "Kraft" }, supplier: "Demo Packaging Co.", specSheet: false },
   { code: "C-SP-002", category: "F.IV.006", name: "Shipper 16 × 12 × 10 in", specs: { size: "16 × 12 × 10 in", material: "Corrugated 44 ECT", color: "Kraft" }, supplier: "Demo Packaging Co." },
@@ -95,21 +98,24 @@ const ITEMS: ItemSeed[] = [
   { code: "C-CB-002", category: "F.IV.007", name: "Pad 12 × 12 in", specs: { size: "12 × 12 in", material: "E-flute", color: "White" }, supplier: "Demo Packaging Co." },
   // F.IV.008 Silica — canister IC-SGC, packet IC-SGP
   { code: "IC-SGC-001", category: "F.IV.008", subType: "canister", name: "Silica canister 1g", specs: { size: "1g", material: "Silica gel, HDPE canister", color: "White" }, supplier: "Demo Packaging Co." },
+  { code: "IC-SGC-002", category: "F.IV.008", subType: "canister", name: "Silica canister 2g", specs: { size: "2g", material: "Silica gel, HDPE canister", color: "White" }, supplier: "Demo Packaging Co." },
   { code: "IC-SGP-001", category: "F.IV.008", subType: "packet", name: "Silica packet 2g", specs: { size: "2g", material: "Silica gel, Tyvek packet", color: "White" }, supplier: "Demo Packaging Co." },
   { code: "IC-SGP-002", category: "F.IV.008", subType: "packet", name: "Silica packet 5g", specs: { size: "5g", material: "Silica gel, paper packet", color: "Brown" }, supplier: "Demo Packaging Co." },
   // F.IV.009 Scoops
   { code: "IC-SCOOP-001", category: "F.IV.009", name: "Scoop 5cc PP White", specs: { size: "5cc", material: "PP", color: "White" }, supplier: "Demo Packaging Co." },
   { code: "IC-SCOOP-002", category: "F.IV.009", name: "Scoop 10cc PP Clear", specs: { size: "10cc", material: "PP", color: "Clear" }, supplier: "Demo Packaging Co." },
-  // F.IV.010 Tablets (purchased finished bulk tablets)
-  { code: "C-TB-001", category: "F.IV.010", name: "Milk Thistle 500mg tablet", specs: { size: "500mg", material: "Milk thistle tablet (EGUOO formula)", color: "Brown, oval" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Demo Tablet Maker (not ASL approved)" },
-  { code: "C-TB-002", category: "F.IV.010", name: "Vitamin C 1000mg tablet", specs: { size: "1000mg", material: "Vitamin C tablet", color: "White, oblong" }, supplier: "Demo Ingredients Co." },
+  // F.IV.010 Tablets — purchased finished bulk tablets; "in-house" is only a flag for now
+  { code: "C-TB-001", category: "F.IV.010", subType: "purchased", name: "Milk Thistle 500mg tablet", specs: { size: "500mg", material: "Milk thistle tablet (EGUOO formula)", color: "Brown, oval" }, owner: "LiQi", dedicatedProduct: LIQI_PRODUCT, supplier: "Demo Tablet Maker (not ASL approved)" },
+  { code: "C-TB-002", category: "F.IV.010", subType: "purchased", name: "Vitamin C 1000mg tablet", specs: { size: "1000mg", material: "Vitamin C tablet", color: "White, oblong" }, supplier: "Demo Ingredients Co." },
+  { code: "C-TB-003", category: "F.IV.010", subType: "inHouse", name: "Milk Thistle 250mg tablet (in-house)", specs: { size: "250mg", material: "Milk thistle tablet (SVLSG formula)", color: "Brown, round" } },
+  { code: "C-TB-004", category: "F.IV.010", subType: "inHouse", name: "Vitamin D3 25mcg tablet (in-house)", specs: { size: "25mcg", material: "Vitamin D3 tablet", color: "Yellow, round" } },
 ];
 
 // What each demo lot shows:
 //   quarantine     — received; release requirements may be open (missing documents)
 //   draft          — an inspection draft is waiting for QC to confirm it
 //   approved       — inspection approved, everything on file: ready for QC to release
-//   released       — released by QC (with `usage`: in use)
+//   released       — released by QC (with `usage`: in use; `changes`: loss / scrap / count adjustment)
 type LotSeed = {
   item: string;
   supplier: string;
@@ -125,12 +131,16 @@ type LotSeed = {
   state: "quarantine" | "draft" | "approved" | "released";
   releasedOn?: string;
   usage?: { date: string; qty: number; product: string; room?: string; by?: string }[];
+  changes?: { date: string; type: "loss" | "scrap" | "count_adjustment"; qty: number; reason: string; by?: string }[]; // qty signed
   by: string; // initials of who received it
   mfg?: string;
   exp?: string;
 };
 
 const LAB = ["ID test result", "Microbiology test result", "Heavy metals test result"];
+
+// Near expiry: 25 days after the day the demo is loaded, so it stays "near" whenever you reset.
+const NEAR_EXPIRY = new Date(Date.now() + 25 * 86_400_000).toISOString().slice(0, 10);
 
 const LOTS: LotSeed[] = [
   // Real example: LiQi bottles — released, 99,540 of 142,800 used in Room #6 for EGUOO-Milk Thistle
@@ -147,7 +157,8 @@ const LOTS: LotSeed[] = [
     item: "RM-001", supplier: "Demo Ingredients Co.", batch: "MTE-26-0412", received: "2026-06-10", cases: 4, perCase: 25,
     location: "1241 Alderwood", unitCost: "38.50", po: "PO-2026-0611", docs: ["Photo", "COA", ...LAB], state: "released", releasedOn: "2026-06-24",
     usage: [{ date: "2026-07-08", qty: 40, product: LIQI_PRODUCT, room: "#6 Packaging", by: "A1" }],
-    by: "A2", mfg: "2026-04-12", exp: "2028-04-11",
+    // near expiry: older stock bought late in its shelf life
+    by: "A2", mfg: "2024-12-01", exp: NEAR_EXPIRY,
   },
   // Real example: 38mm lids from HongKong Tao — released, not used yet
   {
@@ -163,10 +174,12 @@ const LOTS: LotSeed[] = [
   {
     item: "C-CB-001", supplier: "Demo Packaging Co.", batch: "CB-0825-A", received: "2026-08-25", cases: 20, perCase: 250,
     location: "1283 Alviso", unitCost: "0.09", po: "PO-2026-0820", docs: ["Photo", "Packing list"], state: "released", releasedOn: "2026-09-01", by: "A2",
+    changes: [{ date: "2026-09-22", type: "loss", qty: -250, reason: "One case crushed by a forklift in the Alviso warehouse", by: "A3" }],
   },
   {
     item: "C-TB-002", supplier: "Demo Ingredients Co.", batch: "VC1000-2609", received: "2026-09-15", cases: 20, perCase: 5000,
     location: "1283 Alviso", unitCost: "0.021", po: "PO-2026-0902", docs: ["Photo", "Packing list", "COA", ...LAB], state: "released", releasedOn: "2026-09-29",
+    usage: [{ date: "2026-10-12", qty: 30000, product: "Vitamin C 1000mg (SVLSG)", by: "A2" }],
     by: "A1", mfg: "2026-08-30", exp: "2028-08-29",
   },
   // Inspection approved, everything on file — QC can release it
@@ -183,6 +196,12 @@ const LOTS: LotSeed[] = [
   {
     item: "C-CAP-001", supplier: "Demo Packaging Co.", batch: "HPMC0-2610-55", received: "2026-10-20", cases: 12, perCase: 50000,
     location: "1283 Alviso", unitCost: "0.004", po: "PO-2026-1008", docs: ["Photo", "Packing list", "COA"], state: "quarantine", by: "A1",
+  },
+  // Finished capsules (counted in capsules): COA and ID test on file; microbiology and heavy metals pending
+  {
+    item: "C-CAP-003", supplier: "Demo Ingredients Co.", batch: "MTC500-2610", received: "2026-10-24", cases: 20, perCase: 10000,
+    location: "1241 Alderwood", unitCost: "0.03", po: "PO-2026-1018", docs: ["Photo", "Packing list", "COA", "ID test result"], state: "quarantine", by: "A2",
+    mfg: "2026-10-01", exp: "2028-09-30",
   },
   // Total does not match the packing list — QC follow-up
   {
@@ -307,7 +326,7 @@ async function main() {
   }
 
   // items, with explicit codes; counters then continue after the highest number per prefix
-  const items: Record<string, { id: number; category: (typeof categories)[string] }> = {};
+  const items: Record<string, { id: number; category: (typeof categories)[string]; subType: string | null }> = {};
   const highest: Record<string, number> = {};
   for (const it of ITEMS) {
     const category = categories[it.category];
@@ -330,7 +349,7 @@ async function main() {
         await auditCreate(tx, { userId: users.A1.id, table: "Item", recordId: row.id, values, reason: REASON });
         return row;
       });
-      items[it.code] = { id: item.id, category };
+      items[it.code] = { id: item.id, category, subType: it.subType ?? null };
       if (it.specSheet !== false)
         await addDocument(tx, users.A1.id, at("2026-04-15", 11), "Spec sheet", it.code, [it.code, it.name, Object.values(it.specs).join(" · ")], { itemId: item.id });
     });
@@ -342,7 +361,7 @@ async function main() {
   for (const l of sorted) {
     const item = items[l.item];
     const operator = users[l.by];
-    const config = JSON.parse(item.category.config) as { inspectionChecklist: { key: string }[] };
+    const config = itemSettings(item.category, item.subType); // sub-type decides the inspection
     const qty = l.cases * l.perCase;
     const location = locations[l.location];
     const received = day(l.received);
@@ -442,6 +461,15 @@ async function main() {
           });
         }
       }
+      // loss / scrap / count adjustment: each with its reason (on the transaction and in the audit trail)
+      for (const c of l.changes ?? []) {
+        const by = users[c.by ?? "A1"];
+        const values = { lotId: lot.id, type: c.type, qty: c.qty, date: day(c.date), operatorId: by.id, reason: c.reason };
+        await dated(tx, at(c.date, 15), async () => {
+          const txn = await tx.inventoryTransaction.create({ data: { ...values, createdAt: at(c.date, 15) } });
+          await auditCreate(tx, { userId: by.id, table: "InventoryTransaction", recordId: txn.id, values, reason: c.reason });
+        });
+      }
     });
   }
 
@@ -455,8 +483,14 @@ async function main() {
     documents: await prisma.document.count(),
   };
   console.log("Demo data loaded:", counts);
-  const missing = CATEGORIES.filter((c) => !ITEMS.some((i) => i.category === c.formNo));
-  if (missing.length) console.warn("Categories without demo items:", missing.map((c) => c.formNo).join(", "));
+  // every category, and every sub-type, should have 2–3 demo items
+  for (const c of CATEGORIES) {
+    const groups = c.config.subTypes.length ? c.config.subTypes.map((t) => ({ name: `${c.name} / ${t.label}`, key: t.key })) : [{ name: c.name, key: undefined }];
+    for (const g of groups) {
+      const n = ITEMS.filter((i) => i.category === c.formNo && i.subType === g.key).length;
+      if (n < 2 || n > 3) console.warn(`${c.formNo} ${g.name}: ${n} demo items (expected 2–3)`);
+    }
+  }
 }
 
 function addDays(date: string, n: number) {

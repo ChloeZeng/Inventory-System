@@ -71,8 +71,16 @@ export const TRANSACTION_TYPES = [
   { value: "sample", label: "Sample" },
   { value: "sent_to_client", label: "Sent to client" },
   { value: "damaged_defect", label: "Damaged / defect" },
-  { value: "adjustment", label: "Adjustment" },
+  { value: "loss", label: "Loss" },
+  { value: "scrap", label: "Scrap" },
+  { value: "count_adjustment", label: "Count adjustment" },
+  { value: "adjustment", label: "Adjustment" }, // legacy, before count adjustments had their own type
 ] as const;
+
+// Stock changes outside normal use. Each needs a reason (stored on the transaction and in the
+// audit trail). Loss and scrap take stock out; a count adjustment can go either way.
+export const STOCK_CHANGE_TYPES = ["loss", "scrap", "count_adjustment"] as const;
+export type StockChangeType = (typeof STOCK_CHANGE_TYPES)[number];
 
 // Usage entry (spec §4.5) takes stock out of a released lot. "receive" is written by
 // receiving; "adjustment" is left out because the spec does not define how or by whom

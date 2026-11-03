@@ -6,7 +6,7 @@
 // requirements, inspection checklist), so they can be edited later without code changes.
 
 import type { PrismaClient } from "@prisma/client";
-import type { CategoryConfig, InspectionQuestion, Requirement, SpecField } from "../src/lib/category-config";
+import type { CategoryConfig, InspectionQuestion, InventoryColumn, Requirement, SpecField } from "../src/lib/category-config";
 
 // ---------------------------------------------------------------------------
 // Demo users (replaced by Google Workspace login later). role "admin" manages users;
@@ -64,7 +64,6 @@ const UNIT_COST: Requirement = { key: "unitCost", label: "Unit cost", source: "f
 const PACKING_LIST_OR_COA: Requirement = { key: "packingListOrCoa", label: "Packing list / COA", source: "document", attachedTo: "lot", anyOf: ["Packing list", "COA"], task: "Upload packing list / COA", ref: "21 CFR 111" };
 const PACKING_LIST: Requirement = { key: "packingList", label: "Packing list", source: "document", documentType: "Packing list", attachedTo: "lot", task: "Upload packing list", ref: "Receiving log" };
 const COA: Requirement = { key: "coa", label: "Supplier COA", source: "document", documentType: "COA", attachedTo: "lot", task: "Upload supplier COA", ref: "21 CFR 111" };
-const COA_OR_INTERNAL: Requirement = { key: "coaOrInternalTest", label: "COA or internal test result", source: "document", attachedTo: "lot", anyOf: ["COA", "Internal test result"], task: "Upload COA or internal test result", ref: "21 CFR 111" };
 const INSPECTION: Requirement = { key: "inspection", label: "Incoming inspection (ANSI sampling)", source: "inspection", task: "Inspect lot (F.WD.003)", ref: "F.WD.003", owner: "qc" };
 // Lab testing: identity, microbiology and heavy metals (21 CFR 111.75).
 const LAB_TESTS: Requirement[] = [
@@ -105,35 +104,59 @@ function itemRequirements(specFields: SpecField[]): Requirement[] {
   ];
 }
 
+// Release requirements every category shares, then the category's own test path.
+function beforeRelease(tests: Requirement[], inspection: boolean): Requirement[] {
+  return [SPEC_SHEET, PO_INVOICE, UNIT_COST, ...tests, ...(inspection ? [INSPECTION] : [])];
+}
+
 function config(opts: {
   specFields: SpecField[];
   beforeRelease: Requirement[];
   inspection: boolean;
+  columns: InventoryColumn[];
   subTypes?: CategoryConfig["subTypes"];
 }): CategoryConfig {
   return {
     subTypes: opts.subTypes ?? [],
     specFields: opts.specFields,
-    requirements: {
-      at_receiving: AT_RECEIVING,
-      before_release: [SPEC_SHEET, PO_INVOICE, UNIT_COST, ...opts.beforeRelease, ...(opts.inspection ? [INSPECTION] : [])],
-    },
+    requirements: { at_receiving: AT_RECEIVING, before_release: beforeRelease(opts.beforeRelease, opts.inspection) },
     itemRequirements: itemRequirements(opts.specFields),
     inspectionChecklist: opts.inspection ? F_WD_003 : [],
+    inventoryColumns: opts.columns,
   };
 }
 
 const COMPONENT = description({ size: "Size", material: "Material", color: "Color" });
 
+// Inventory list columns (defaults; users will be able to change them). See InventoryColumn.
+const col = (key: string, label: string): InventoryColumn => ({ key, label });
+const OWNER = col("owner", "Owner / dedicated product");
+const LOCATION = col("location", "Location");
+const AVAILABLE = col("available", "Available");
+const SIZE_MATERIAL_COLOR = [col("spec.size", "Size"), col("spec.material", "Material"), col("spec.color", "Color")];
+
 export type CategorySeed = {
   formNo: string;
   name: string;
-  codePrefix: string; // for a category with sub-types: the family prefix (each sub-type has its own)
+  codePrefix: string; // sub-types without their own prefix use this one
   legacyPrefixes?: string[]; // prefixes this category had before (an existing database is updated in place)
-  unit: "units" | "kg" | "tablets";
-  testPath: string; // key of TEST_PATHS (src/lib/constants.ts)
+  unit: "pcs" | "kg" | "tablets" | "capsules"; // sub-types may override it
+  testPath: string; // key of TEST_PATHS (src/lib/constants.ts); sub-types may override it
   config: CategoryConfig;
 };
+
+// ANSI-sampled packaging component: unit pcs, packing list / COA, F.WD.003 inspection.
+function component(formNo: string, name: string, codePrefix: string, specFields: SpecField[], columns: InventoryColumn[], extra: Partial<CategorySeed> = {}): CategorySeed {
+  return {
+    formNo,
+    name,
+    codePrefix,
+    unit: "pcs",
+    testPath: "ansi_sampling",
+    config: config({ specFields, beforeRelease: [PACKING_LIST_OR_COA], inspection: true, columns }),
+    ...extra,
+  };
+}
 
 // In form-number order. Item codes are always uppercase PREFIX-### (e.g. C-LID-001).
 export const CATEGORIES: CategorySeed[] = [
@@ -151,102 +174,90 @@ export const CATEGORIES: CategorySeed[] = [
       ),
       beforeRelease: [PACKING_LIST_OR_COA, ...LAB_TESTS],
       inspection: false,
+      columns: [col("name", "Name"), OWNER, LOCATION, col("nearestExpiry", "Nearest expiry"), AVAILABLE],
     }),
   },
   {
     formNo: "F.IV.002",
-    name: "Capsule Shells",
+    name: "Capsules",
     codePrefix: "C-CAP",
-    unit: "units",
-    testPath: "coa_or_internal_ansi",
-    config: config({ specFields: COMPONENT, beforeRelease: [PACKING_LIST, COA_OR_INTERNAL], inspection: true }),
-  },
-  {
-    formNo: "F.IV.003",
-    name: "Bottles",
-    codePrefix: "C-BOT",
-    unit: "units",
-    testPath: "ansi_sampling",
-    config: config({ specFields: COMPONENT, beforeRelease: [PACKING_LIST_OR_COA], inspection: true }),
-  },
-  {
-    formNo: "F.IV.004",
-    name: "Lids",
-    codePrefix: "C-LID",
-    unit: "units",
-    testPath: "ansi_sampling",
-    config: config({ specFields: COMPONENT, beforeRelease: [PACKING_LIST_OR_COA], inspection: true }),
-  },
-  {
-    formNo: "F.IV.005",
-    name: "Labels",
-    codePrefix: "C-LBL",
-    legacyPrefixes: ["C-LABEL"],
-    unit: "units",
-    testPath: "ansi_sampling",
+    // the category's own settings are the empty shell's; a finished capsule overrides them
+    unit: "pcs",
+    testPath: "coa_ansi",
     config: config({
-      specFields: description({ size: "Size (W × H)", material: "Material / stock", color: "Print colors" }),
-      beforeRelease: [PACKING_LIST_OR_COA],
+      subTypes: [
+        { key: "emptyShell", label: "Empty shell", unit: "pcs", testPath: "coa_ansi" },
+        {
+          key: "finishedCapsule",
+          label: "Finished capsule",
+          unit: "capsules",
+          testPath: "lab_testing",
+          requirements: { before_release: beforeRelease([PACKING_LIST_OR_COA, ...LAB_TESTS], false) },
+          inspectionChecklist: [],
+        },
+      ],
+      specFields: COMPONENT,
+      beforeRelease: [PACKING_LIST, COA],
       inspection: true,
+      columns: [...SIZE_MATERIAL_COLOR, OWNER, LOCATION, AVAILABLE],
     }),
   },
-  {
-    formNo: "F.IV.006",
-    name: "Shipper Packs",
-    codePrefix: "C-SP",
-    unit: "units",
-    testPath: "ansi_sampling",
-    config: config({
-      specFields: description({ size: "Dimensions", material: "Material", color: "Color / print" }),
-      beforeRelease: [PACKING_LIST_OR_COA],
-      inspection: true,
-    }),
-  },
-  {
-    formNo: "F.IV.007",
-    name: "Cardboards",
-    codePrefix: "C-CB",
-    unit: "units",
-    testPath: "ansi_sampling",
-    config: config({
-      specFields: description({ size: "Dimensions", material: "Board grade", color: "Color / print" }),
-      beforeRelease: [PACKING_LIST_OR_COA],
-      inspection: true,
-    }),
-  },
+  component("F.IV.003", "Bottles", "C-BOT", COMPONENT, [...SIZE_MATERIAL_COLOR, OWNER, LOCATION, AVAILABLE]),
+  component("F.IV.004", "Lids", "C-LID", COMPONENT, [...SIZE_MATERIAL_COLOR, OWNER, LOCATION, AVAILABLE]),
+  component(
+    "F.IV.005",
+    "Labels",
+    "C-LBL",
+    [
+      ...description({ size: "Size (W × H)", material: "Material / stock", color: "Print colors" }),
+      { key: "labelVersion", label: "Label version", required: true },
+    ],
+    [col("spec.size", "Size"), col("dedicatedProduct", "Dedicated product"), col("spec.labelVersion", "Label version"), LOCATION, AVAILABLE],
+    { legacyPrefixes: ["C-LABEL"] },
+  ),
+  component(
+    "F.IV.006",
+    "Shipper Packs",
+    "C-SP",
+    description({ size: "Dimensions", material: "Material / type", color: "Color / print" }),
+    [col("spec.size", "Size"), col("spec.material", "Material/Type"), LOCATION, AVAILABLE],
+  ),
+  component(
+    "F.IV.007",
+    "Cardboards",
+    "C-CB",
+    description({ size: "Dimensions", material: "Material / type", color: "Color / print" }),
+    [col("spec.size", "Size"), col("spec.material", "Material/Type"), LOCATION, AVAILABLE],
+  ),
   {
     formNo: "F.IV.008",
     name: "Silica",
     codePrefix: "IC-SG",
     legacyPrefixes: ["INT-C-SP"],
-    unit: "units",
+    unit: "pcs",
     testPath: "coa_ansi",
     config: config({
       subTypes: [
         { key: "canister", label: "Canister", codePrefix: "IC-SGC" },
         { key: "packet", label: "Packet", codePrefix: "IC-SGP" },
       ],
-      specFields: description({ size: "Size / weight", material: "Material", color: "Color" }),
+      specFields: description({ size: "Weight (g)", material: "Material", color: "Color" }),
       beforeRelease: [PACKING_LIST, COA],
       inspection: true,
+      columns: [col("subType", "Sub-type"), col("spec.size", "Weight (g)"), LOCATION, AVAILABLE],
     }),
   },
-  {
-    formNo: "F.IV.009",
-    name: "Scoops",
-    codePrefix: "IC-SCOOP",
-    unit: "units",
-    testPath: "ansi_sampling",
-    config: config({
-      specFields: description({ size: "Volume", material: "Material", color: "Color" }),
-      beforeRelease: [PACKING_LIST_OR_COA],
-      inspection: true,
-    }),
-  },
-  // Finished bulk tablets — PURCHASED route only: received through the receiving wizard and
-  // released on the supplier COA plus ID, microbiology and heavy metals testing.
-  // TODO(production module): tablets produced in-house will come from a future production
-  // module (batch record → bulk tablets lot). Not built yet; do not add it here.
+  component(
+    "F.IV.009",
+    "Scoops",
+    "IC-SCOOP",
+    description({ size: "Volume", material: "Material", color: "Color" }),
+    [col("spec.size", "Volume"), col("spec.material", "Material"), col("spec.color", "Color"), LOCATION, AVAILABLE],
+  ),
+  // Finished bulk tablets. "In-house" is only a flag for now: tablets produced in-house will
+  // come from a future production module (batch record → bulk tablets lot).
+  // TODO(production module): not built yet; do not add it here.
+  // Purchased tablets also need the supplier's COA; in-house tablets have no supplier COA.
   {
     formNo: "F.IV.010",
     name: "Tablets",
@@ -254,12 +265,18 @@ export const CATEGORIES: CategorySeed[] = [
     unit: "tablets",
     testPath: "coa_lab_testing",
     config: config({
+      subTypes: [
+        { key: "purchased", label: "Purchased" },
+        // in-house: no supplier, so no PO / invoice and no supplier COA
+        { key: "inHouse", label: "In-house", testPath: "lab_testing", requirements: { before_release: [SPEC_SHEET, UNIT_COST, ...LAB_TESTS] } },
+      ],
       specFields: description(
-        { size: "Strength / weight", material: "Formula / product", color: "Color / shape" },
+        { size: "Strength", material: "Formula / product", color: "Color / shape" },
         { size: true, material: true, color: false },
       ),
       beforeRelease: [PACKING_LIST, COA, ...LAB_TESTS],
       inspection: false,
+      columns: [col("spec.size", "Strength"), OWNER, LOCATION, AVAILABLE],
     }),
   },
 ];

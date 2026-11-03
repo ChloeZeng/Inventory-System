@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { categoryLabel, formatQty, parseCategoryConfig, parseSpecs, subTypeLabel } from "@/lib/category-config";
+import { categoryLabel, formatQty, itemSettings, parseSpecs, subTypeLabel } from "@/lib/category-config";
 import { testPathLabel } from "@/lib/constants";
 import { getCurrentUser } from "@/lib/current-user";
 import Link from "next/link";
 import { ITEM_DOCUMENT_TYPES } from "@/lib/constants";
 import { itemChecklist, lotLabel } from "@/lib/records";
+import { stockByItem } from "@/lib/inventory";
 import { Badge, Card, PageHeader, Table, formatDate, formatDateTime } from "@/components/ui";
 import { Checklist, CompletionBar } from "@/components/progress";
 import { QcStatusBadge } from "@/components/qc-status-badge";
@@ -35,11 +36,15 @@ export default async function ItemDetailPage({
   });
   if (!item) notFound();
 
-  const [user, suppliers] = await Promise.all([
+  const [user, suppliers, stockMap] = await Promise.all([
     getCurrentUser(),
     prisma.supplier.findMany({ where: { OR: [{ active: true }, { id: item.supplierId ?? -1 }] }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    stockByItem([item.id]),
   ]);
-  const config = parseCategoryConfig(item.category.config);
+  // only released lots are available; quarantine stock is shown apart
+  const stock = stockMap.get(item.id)!;
+  const settings = itemSettings(item.category, item.subType);
+  const config = settings.config;
   const specs = parseSpecs(item.specs);
   const hasSpecSheet = item.documents.some((d) => d.type === "Spec sheet");
   const checklist = itemChecklist(item);
@@ -53,7 +58,7 @@ export default async function ItemDetailPage({
             <span className="font-mono">{item.code}</span>
             <span className="text-slate-500">{item.name}</span>
             {!item.active && <Badge>inactive</Badge>}
-            {checklist.complete && <Badge tone="green">Audit ready</Badge>}
+            {checklist.complete && <Badge tone="green">Record complete</Badge>}
           </span>
         }
         subtitle={
@@ -102,12 +107,24 @@ export default async function ItemDetailPage({
                 </dd>
               </div>
               <div>
+                <dt className="text-slate-500">Available (released)</dt>
+                <dd className="font-medium tabular-nums">{formatQty(stock.available, settings.unit)}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">In quarantine</dt>
+                <dd className="font-medium tabular-nums">{formatQty(stock.quarantine, settings.unit)}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Nearest expiry (available)</dt>
+                <dd className="font-medium">{stock.nearestExpiry ? formatDate(stock.nearestExpiry) : "—"}</dd>
+              </div>
+              <div>
                 <dt className="text-slate-500">Counted in</dt>
-                <dd className="font-medium">{item.category.unit}</dd>
+                <dd className="font-medium">{settings.unit}</dd>
               </div>
               <div className="col-span-2">
                 <dt className="text-slate-500">Testing before release</dt>
-                <dd className="font-medium">{testPathLabel(item.category.testPath) ?? "—"}</dd>
+                <dd className="font-medium">{testPathLabel(settings.testPath) ?? "—"}</dd>
               </div>
             </dl>
             <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-800">Description</h3>
@@ -169,7 +186,7 @@ export default async function ItemDetailPage({
                     </td>
                     <td className="px-4 py-2 font-mono">{l.receipt.receivingNo}</td>
                     <td className="px-4 py-2">{formatDate(l.receipt.dateReceived)}</td>
-                    <td className="px-4 py-2 tabular-nums">{formatQty(l.qtyReceived, item.category.unit)}</td>
+                    <td className="px-4 py-2 tabular-nums">{formatQty(l.qtyReceived, settings.unit)}</td>
                     <td className="px-4 py-2">
                       <QcStatusBadge status={l.qcStatus} />
                     </td>

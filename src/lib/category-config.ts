@@ -58,10 +58,26 @@ export type RequirementOwner = "anyone" | "qc" | "warehouse" | "admin";
 // must be recorded as a defect with a class.
 export type InspectionQuestion = { key: string; label: string; group?: string };
 
-// A category split into kinds that get their own code prefix, e.g. Silica:
-// canister → IC-SGC-001, packet → IC-SGP-001. A new item of such a category starts
-// with "Which kind?" and the answer decides its code.
-export type SubType = { key: string; label: string; codePrefix: string };
+// A category split into kinds. A new item of such a category starts with "Which kind?".
+// A sub-type may have its own code prefix (Silica: canister → IC-SGC-001, packet →
+// IC-SGP-001; without one the category's prefix is used) and may override the category's
+// unit, test path, release requirements and inspection checklist (Capsules: an empty shell
+// is counted in pcs and ANSI-sampled; a finished capsule is counted in capsules and lab-tested).
+export type SubType = {
+  key: string;
+  label: string;
+  codePrefix?: string;
+  unit?: string;
+  testPath?: string;
+  requirements?: Partial<Record<Stage, Requirement[]>>;
+  inspectionChecklist?: InspectionQuestion[];
+};
+
+// A column of the inventory list for a category (default set per category in Category.config;
+// users will be able to change them). Keys:
+//   name | subType | owner (owner / dedicated product) | dedicatedProduct | location |
+//   nearestExpiry | available | quarantine | spec.<specField key> (e.g. spec.size)
+export type InventoryColumn = { key: string; label: string };
 
 export type CategoryConfig = {
   subTypes: SubType[];
@@ -72,6 +88,8 @@ export type CategoryConfig = {
   itemRequirements: Requirement[];
   // incoming-inspection checklist for this category (empty: no checklist configured)
   inspectionChecklist: InspectionQuestion[];
+  // default inventory list columns
+  inventoryColumns: InventoryColumn[];
 };
 
 const EMPTY: CategoryConfig = {
@@ -80,6 +98,7 @@ const EMPTY: CategoryConfig = {
   requirements: { at_receiving: [], before_release: [] },
   itemRequirements: [],
   inspectionChecklist: [],
+  inventoryColumns: [],
 };
 
 export function parseCategoryConfig(json: string | null | undefined): CategoryConfig {
@@ -95,6 +114,7 @@ export function parseCategoryConfig(json: string | null | undefined): CategoryCo
       },
       itemRequirements: raw.itemRequirements ?? [],
       inspectionChecklist: raw.inspectionChecklist ?? [],
+      inventoryColumns: raw.inventoryColumns ?? [],
     };
   } catch {
     return EMPTY;
@@ -133,15 +153,48 @@ export function categoryLabel(c: { formNo?: string | null; name: string }) {
 // (null when the sub-type is missing or unknown), else the category's.
 export function itemCodePrefix(category: { codePrefix: string }, config: CategoryConfig, subType?: string | null) {
   if (!config.subTypes.length) return category.codePrefix;
-  return config.subTypes.find((t) => t.key === subType)?.codePrefix ?? null;
+  const t = config.subTypes.find((x) => x.key === subType);
+  return t ? (t.codePrefix ?? category.codePrefix) : null;
+}
+
+// "IC-SGC-### / IC-SGP-###" (distinct prefixes of the sub-types) or "C-CAP-###".
+export function codePatterns(category: { codePrefix: string }, config: CategoryConfig) {
+  const prefixes = config.subTypes.length ? [...new Set(config.subTypes.map((t) => t.codePrefix ?? category.codePrefix))] : [category.codePrefix];
+  return prefixes.map((p) => `${p}-###`);
+}
+
+export type CategoryRow = { config: string; unit: string; testPath: string | null; codePrefix: string };
+
+// The settings that apply to one item: its category's, with its sub-type's overrides.
+// Everything that evaluates requirements, picks a unit or a sampling plan goes through this.
+export function itemSettings(category: CategoryRow, subType?: string | null) {
+  const config = parseCategoryConfig(category.config);
+  const t = config.subTypes.find((x) => x.key === subType) ?? null;
+  return {
+    config,
+    subType: t,
+    unit: t?.unit ?? category.unit,
+    testPath: t?.testPath ?? category.testPath,
+    requirements: {
+      at_receiving: t?.requirements?.at_receiving ?? config.requirements.at_receiving,
+      before_release: t?.requirements?.before_release ?? config.requirements.before_release,
+    } as Record<Stage, Requirement[]>,
+    inspectionChecklist: t?.inspectionChecklist ?? config.inspectionChecklist,
+  };
+}
+
+// The unit a lot / item is counted in (sub-type unit, else the category's).
+export function itemUnit(item: { subType: string | null; category: CategoryRow }) {
+  return itemSettings(item.category, item.subType).unit;
 }
 
 export function subTypeLabel(config: CategoryConfig, subType: string | null | undefined) {
   return config.subTypes.find((t) => t.key === subType)?.label ?? null;
 }
 
-// "unit", "kg", "tablet" — for "per unit", "per kg".
+// "pc", "kg", "tablet", "capsule" — for "per pc", "per kg".
 export function unitSingular(unit = "units") {
+  if (unit === "pcs") return "pc";
   return unit !== "kg" && unit.endsWith("s") ? unit.slice(0, -1) : unit;
 }
 

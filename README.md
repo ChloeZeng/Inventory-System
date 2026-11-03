@@ -21,9 +21,10 @@ The first visit opens a short welcome: pick who you are (demo users: **QC** — 
 
 ### Demo data (`npm run seed:demo`)
 
-For demos only. It deletes every row, then loads all ten categories with 2–3 items each and 1–2 lots each in
-different states: awaiting inspection, inspection draft waiting for QC, ready for release, missing documents
-(lab results, COA, packing list, spec sheet), a quantity difference for QC to resolve, released, and in use.
+For demos only. It deletes every row, then loads all ten categories with 2–3 items per category and per sub-type,
+and lots in different states: awaiting inspection, inspection draft waiting for QC, ready for release, missing
+documents (lab results, COA, packing list, spec sheet), a quantity difference for QC to resolve, released, and in
+use. It also includes a loss (C-CB-001) and a lot near expiry (RM-001, expiring 25 days after the reset).
 It includes two real examples: C-BOT-001 (150ml PET Amber, owned by LiQi, dedicated to EGUOO-Milk Thistle,
 lot LQ401263093, 99,540 of 142,800 used in #6 Packaging) and C-LID-010 (38mm White PP, lot MDLSM2605131-01,
 1241 Alderwood). Every other supplier, item and lot is demo data, and the documents are placeholder files marked DEMO.
@@ -38,21 +39,32 @@ The ten inventory categories are data (`prisma/catalog.ts` seeds them into the `
 form number, e.g. "F.IV.004 · Lids". Each one stores its code prefix, sub-types, unit, test path and required
 fields, so they can be edited later without code changes. Item codes are always uppercase `PREFIX-###`.
 
-| Form | Category | Code | Unit | Testing before release |
-|---|---|---|---|---|
-| F.IV.001 | Raw Ingredients | RM-001 | kg | Lab testing: ID, microbiology, heavy metals |
-| F.IV.002 | Capsule Shells | C-CAP-001 | units | COA or internal test + ANSI sampling |
-| F.IV.003 | Bottles | C-BOT-001 | units | ANSI sampling |
-| F.IV.004 | Lids | C-LID-001 | units | ANSI sampling |
-| F.IV.005 | Labels | C-LBL-001 | units | ANSI sampling |
-| F.IV.006 | Shipper Packs | C-SP-001 | units | ANSI sampling |
-| F.IV.007 | Cardboards | C-CB-001 | units | ANSI sampling |
-| F.IV.008 | Silica | canister IC-SGC-001, packet IC-SGP-001 | units | COA + ANSI sampling |
-| F.IV.009 | Scoops | IC-SCOOP-001 | units | ANSI sampling |
-| F.IV.010 | Tablets | C-TB-001 | tablets | Supplier COA + ID, microbiology, heavy metals |
+| Form | Category | Sub-types | Code | Unit | Testing before release |
+|---|---|---|---|---|---|
+| F.IV.001 | Raw Ingredients | — | RM-001 | kg | ID, microbiology, heavy metals |
+| F.IV.002 | Capsules | Empty shell / Finished capsule | C-CAP-001 | pcs / capsules | COA + ANSI sampling / ID, microbiology, heavy metals |
+| F.IV.003 | Bottles | — | C-BOT-001 | pcs | ANSI sampling |
+| F.IV.004 | Lids | — | C-LID-001 | pcs | ANSI sampling |
+| F.IV.005 | Labels | — | C-LBL-001 | pcs | ANSI sampling (items also have a label version) |
+| F.IV.006 | Shipper Packs | — | C-SP-001 | pcs | ANSI sampling |
+| F.IV.007 | Cardboards | — | C-CB-001 | pcs | ANSI sampling |
+| F.IV.008 | Silica | Canister / Packet | IC-SGC-001 / IC-SGP-001 | pcs | COA + ANSI sampling |
+| F.IV.009 | Scoops | — | IC-SCOOP-001 | pcs | ANSI sampling |
+| F.IV.010 | Tablets | Purchased / In-house | C-TB-001 | tablets | ID, microbiology, heavy metals (purchased also needs the supplier COA) |
 
-A new Silica item first asks "Canister or packet?"; the answer sets the prefix. Tablets are the purchased route only
-(received through the wizard); in-house tablets will come from a future production module.
+A new item in a category with sub-types first asks which one (e.g. "Canister or packet?"). A sub-type can have its
+own code prefix, unit, test path and requirements (`itemSettings` in `src/lib/category-config.ts`). "In-house" tablets
+are only a flag for now; in-house production will come from a future production module. Each category also stores
+its default inventory columns (`inventoryColumns`; values from `src/lib/inventory.ts`).
+
+### Stock
+
+A lot's balance is always calculated from its transactions, never typed:
+**received − used − loss − scrap ± count adjustment** (`src/lib/stock.ts`). Loss, scrap and count adjustment each
+need a reason, stored on the transaction and in the audit trail (`applyStockChange` in `src/lib/stock-change.ts`,
+server action `recordStockChange`; the form comes with the inventory pages). Item stock shows **Available** (released
+lots only) and **Quarantine** separately; rejected lots count in neither. A complete item or supplier record is
+marked "Record complete"; a lot's status is only Quarantine / Released / Rejected.
 
 Items have a **description** (size, material, color), an **owner** (SVLSG or a client), an optional **dedicated
 product** and a **usual supplier** (separate from the owner). Recording production use of an item for a product other

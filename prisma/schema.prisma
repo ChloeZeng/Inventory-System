@@ -256,8 +256,11 @@ model InventoryTransaction {
   id                Int      @id @default(autoincrement())
   lotId             Int
   lot               Lot      @relation(fields: [lotId], references: [id])
-  type              String // receive | production_use | sample | sent_to_client | damaged_defect | adjustment
-  qty               Int // signed: + into stock, - out of stock
+  // receive | production_use | sample | sent_to_client | damaged_defect (used)
+  // | loss | scrap | count_adjustment (stock changes; each needs a reason) | adjustment (legacy)
+  type              String
+  qty               Int // signed: + into stock, - out of stock. Lot balance = sum of qty, never typed.
+  reason            String? // why: required for loss, scrap and count adjustment (also in the audit trail)
   roomId            Int?
   room              Room?    @relation(fields: [roomId], references: [id])
   productOrCustomer String?

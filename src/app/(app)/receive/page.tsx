@@ -46,10 +46,9 @@ export default async function ReceivePage({ searchParams }: { searchParams: Prom
         label: categoryLabel(c),
         name: c.name,
         codePrefix: c.codePrefix,
-        unit: c.unit,
+        row: { config: c.config, unit: c.unit, testPath: c.testPath, codePrefix: c.codePrefix },
         subTypes: config.subTypes,
         specFields: config.specFields,
-        requirements: config.requirements,
       };
     }),
     items: items.map((i) => ({

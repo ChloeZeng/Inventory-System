@@ -2,7 +2,7 @@
 // and builds the "Fix" links that jump straight to the field or upload.
 
 import type { Prisma } from "@prisma/client";
-import { parseCategoryConfig, parseSpecs, type Requirement } from "./category-config";
+import { itemSettings, parseCategoryConfig, parseSpecs, type Requirement } from "./category-config";
 import {
   SUPPLIER_REQUIREMENTS,
   evaluate,
@@ -53,8 +53,7 @@ export function lotFacts(lot: LotWithFacts): Facts {
 }
 
 export function lotStatus(lot: LotWithFacts) {
-  const config = parseCategoryConfig(lot.item.category.config);
-  const summary = evaluateLot(config.requirements, lotFacts(lot));
+  const summary = evaluateLot(itemSettings(lot.item.category, lot.item.subType).requirements, lotFacts(lot));
   const balance = lot.transactions.reduce((sum, t) => sum + t.qty, 0);
   const lastInspection = lot.inspections.at(-1) ?? null;
   const progress = lotProgress({ qcStatus: lot.qcStatus, summary, lastInspection, balance });

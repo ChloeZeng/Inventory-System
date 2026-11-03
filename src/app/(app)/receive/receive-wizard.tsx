@@ -1,8 +1,8 @@
 "use client";
 
 import { startTransition, useActionState, useRef, useState } from "react";
-import type { Requirement, SpecField, Stage, SubType } from "@/lib/category-config";
-import { formatQty, sameSpecs, unitSingular } from "@/lib/category-config";
+import type { CategoryConfig, CategoryRow, Requirement, SpecField, SubType } from "@/lib/category-config";
+import { codePatterns, formatQty, itemSettings, sameSpecs, unitSingular } from "@/lib/category-config";
 import { plural } from "@/lib/text";
 import { evaluate, type CheckResult, type Facts } from "@/lib/completeness";
 import { SEGREGATION, SUPPLIER_TYPES, segregationLabel, supplierTypeLabel } from "@/lib/constants";
@@ -17,10 +17,9 @@ export type WizardData = {
     label: string; // "F.IV.004 · Lids"
     name: string;
     codePrefix: string;
-    unit: string; // units | kg | tablets
+    row: CategoryRow; // for itemSettings: unit, test path and requirements per sub-type
     subTypes: SubType[];
     specFields: SpecField[];
-    requirements: Record<Stage, Requirement[]>;
   }[];
   items: {
     id: number;
@@ -180,11 +179,13 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
   const unitsPerCase = num(d.unitsPerCase);
   const calculated = cases && unitsPerCase ? cases * unitsPerCase : null;
   const qtyReceived = d.overrideQty ? num(d.qtyReceived) : calculated;
-  const unit = category?.unit ?? "units";
   const subTypes = category?.subTypes ?? [];
   const subType = subTypes.find((t) => t.key === d.subType) ?? null;
+  // unit and requirements follow the item's sub-type (e.g. finished capsules vs empty shells)
+  const settings = category ? itemSettings(category.row, item ? item.subType : (subType?.key ?? null)) : null;
+  const unit = settings?.unit ?? "units";
   // e.g. Silica: the code prefix comes from "Canister or packet?"
-  const newPrefix = subTypes.length ? (subType?.codePrefix ?? null) : (category?.codePrefix ?? null);
+  const newPrefix = category ? (subTypes.length ? (subType ? (subType.codePrefix ?? category.codePrefix) : null) : category.codePrefix) : null;
   const duplicate =
     d.itemMode === "new" && category?.specFields.length && (!subTypes.length || subType)
       ? categoryItems.find((i) => (i.subType ?? "") === (subType?.key ?? "") && sameSpecs(i.specs, d.specs))
@@ -227,8 +228,8 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     },
     inspections: [],
   };
-  const atReceiving = category ? evaluate("at_receiving", category.requirements.at_receiving, facts) : [];
-  const beforeRelease = category ? evaluate("before_release", category.requirements.before_release, facts) : [];
+  const atReceiving = settings ? evaluate("at_receiving", settings.requirements.at_receiving, facts) : [];
+  const beforeRelease = settings ? evaluate("before_release", settings.requirements.before_release, facts) : [];
   const blocking = atReceiving.filter((r) => r.status === "missing");
   // A legitimate "No" (e.g. a shortage) can be saved, but QC has to follow it up before release.
   const followUps = atReceiving.filter((r) => r.status === "followup");
@@ -374,7 +375,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                 checked={d.categoryId === c.id}
                 onChange={() => setD((p) => ({ ...p, categoryId: c.id, itemId: null, subType: "", specs: {} }))}
                 title={c.label}
-                subtitle={`${c.subTypes.length ? c.subTypes.map((t) => `${t.codePrefix}-###`).join(" / ") : `${c.codePrefix}-###`} · ${plural(
+                subtitle={`${codePatterns(c, { subTypes: c.subTypes } as CategoryConfig).join(" / ")} · ${plural(
                   data.items.filter((i) => i.categoryId === c.id).length,
                   "item",
                 )}`}
@@ -431,7 +432,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                 onChange={() => setD((p) => ({ ...p, itemMode: "new", itemId: null }))}
                 title="New item — it is not in the list"
                 subtitle={`Only for a new item type. It gets the next ${
-                  subTypes.length ? subTypes.map((t) => `${t.codePrefix}-###`).join(" or ") : `${category.codePrefix}-###`
+                  codePatterns(category, { subTypes } as CategoryConfig).join(" or ")
                 } code when you save.`}
               />
               <FieldError msg={err("itemId")} />
@@ -443,7 +444,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                       <div className="flex flex-wrap gap-2">
                         {subTypes.map((t) => (
                           <Pill key={t.key} name="subType" value={t.key} checked={d.subType === t.key} onChange={() => set("subType", t.key)}>
-                            {t.label} <span className="font-mono text-xs opacity-75">{t.codePrefix}-###</span>
+                            {t.label} <span className="font-mono text-xs opacity-75">{t.codePrefix ?? category.codePrefix}-###</span>
                           </Pill>
                         ))}
                       </div>
