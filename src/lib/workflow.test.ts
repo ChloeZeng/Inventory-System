@@ -5,7 +5,7 @@ import type { Requirement, Stage as ReqStage } from "./category-config";
 import { evaluateLot, type Facts } from "./completeness";
 import { lotWorkflow, queueTask, type WorkflowInput } from "./workflow";
 
-// A trimmed copy of the Lids rules in prisma/seed.ts.
+// A trimmed copy of the Lids rules in prisma/catalog.ts.
 const LIDS: Record<ReqStage, Requirement[]> = {
   at_receiving: [
     {

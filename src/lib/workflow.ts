@@ -9,9 +9,10 @@
 // so they cannot disagree.
 
 import type { Prisma } from "@prisma/client";
-import type { Requirement } from "./category-config";
+import { formatQty, type Requirement } from "./category-config";
 import { ownerOfOpen, type CheckResult, type CheckSummary } from "./completeness";
 import { LOT_INCLUDE, fixHrefFor, lotStatus } from "./records";
+import { plural } from "./text";
 
 export type Stage = "receiving" | "inspection" | "release" | "failed" | "released" | "depleted" | "rejected";
 export type QueueKey = "inspection" | "release" | "followup";
@@ -73,12 +74,12 @@ export type WorkflowInput = {
   lastInspection: { disposition: string | null } | null; // last CONFIRMED inspection
   hasDraft: boolean;
   balance: number;
+  unit?: string; // the category's unit (units | kg | tablets); default units
 };
 
 type User = { qcAuthorized: boolean };
 
 const lcFirst = (s: string) => (/^[A-Z][A-Z.]/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1));
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 export function areaOf(r: CheckResult): Area {
   if (r.req.source === "inspection") return "Inspection";
@@ -180,7 +181,7 @@ function currentTask(wf: WfCore, input: WorkflowInput, user: User, receivingMiss
         label: "Record usage",
         href: `${lotHref}?do=usage`,
         canDo: true,
-        sentence: `Released — ${input.balance.toLocaleString()} units on hand.`,
+        sentence: `Released — ${formatQty(input.balance, input.unit)} on hand.`,
       };
     case "receiving": {
       const first = firstDoable(receivingMissing) ?? receivingMissing[0];
@@ -272,6 +273,7 @@ export function workflowInputFromLot(lot: Parameters<typeof lotStatus>[0]): Work
     lastInspection,
     hasDraft: lot._count.inspections > 0,
     balance,
+    unit: lot.item.category.unit,
   };
 }
 

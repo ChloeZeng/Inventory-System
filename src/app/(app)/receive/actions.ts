@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
-import { parseCategoryConfig, parseSpecs, sameSpecs } from "@/lib/category-config";
+import { itemCodePrefix, parseCategoryConfig, parseSpecs, sameSpecs } from "@/lib/category-config";
+import { readItemExtras } from "@/lib/item-fields";
 import { evaluate } from "@/lib/completeness";
 import { nextItemCode, nextReceivingNo } from "@/lib/numbering";
 import { auditCreate } from "@/lib/audit";
@@ -32,13 +33,19 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
     const isNewItem = formData.get("itemMode") === "new";
     let existingItem: Awaited<ReturnType<typeof loadItem>> = null;
     const newSpecs: Record<string, string> = {};
+    // e.g. Silica: "Canister or packet?" decides the new item's code prefix
+    const subType = isNewItem && config.subTypes.length ? str(formData, "subType") : null;
+    const newPrefix = isNewItem ? itemCodePrefix(category, config, subType) : null;
+    const extras = readItemExtras(formData);
     if (isNewItem) {
+      if (!newPrefix) fieldErrors.subType = `Answer ${config.subTypes.map((t) => t.label.toLowerCase()).join(" or ")}.`;
+      Object.assign(fieldErrors, extras.fieldErrors);
       for (const f of config.specFields) {
         const v = str(formData, `spec_${f.key}`);
         if (v) newSpecs[f.key] = v;
         else if (f.required) fieldErrors[`spec_${f.key}`] = `${f.label} is required.`;
       }
-      const siblings = await prisma.item.findMany({ where: { categoryId: category.id, active: true } });
+      const siblings = await prisma.item.findMany({ where: { categoryId: category.id, subType, active: true } });
       const dup = siblings.find((i) => sameSpecs(parseSpecs(i.specs), newSpecs));
       if (config.specFields.length && dup)
         return { error: `${dup.code} (${dup.name}) already has these specs. Pick it instead — a new batch does not get a new item code.` };
@@ -84,12 +91,12 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
     const cases = int(formData, "cases", 1);
     const unitsPerCase = int(formData, "unitsPerCase", 1);
     if (!cases) fieldErrors.cases = "Enter the number of cases (1 or more).";
-    if (!unitsPerCase) fieldErrors.unitsPerCase = "Enter units per case (1 or more).";
+    if (!unitsPerCase) fieldErrors.unitsPerCase = `Enter ${category.unit} per case (1 or more).`;
     const calculated = (cases ?? 0) * (unitsPerCase ?? 0);
     const qtyReceived = int(formData, "qtyReceived", 1) ?? calculated;
     const qtyOverrideReason = qtyReceived !== calculated ? str(formData, "qtyOverrideReason") : null;
     if (qtyReceived !== calculated && !qtyOverrideReason)
-      fieldErrors.qtyOverrideReason = `Total differs from ${calculated.toLocaleString()} (cases × units) — give a reason.`;
+      fieldErrors.qtyOverrideReason = `Total differs from ${calculated.toLocaleString()} (cases × ${category.unit} per case) — give a reason.`;
 
     const unitCost = decimal(formData, "unitCost");
     if (unitCost === "invalid") fieldErrors.unitCost = "Enter a number, e.g. 0.0125";
@@ -144,15 +151,15 @@ export async function receiveDelivery(_prev: ActionState, formData: FormData): P
       // Item — only for a new item TYPE
       let itemId = existingItem?.id;
       if (!itemId) {
-        const code = await nextItemCode(tx, category.codePrefix);
-        const item = await tx.item.create({
-          data: { code, name: itemName, categoryId: category.id, specs: JSON.stringify(newSpecs) },
-        });
+        const code = await nextItemCode(tx, newPrefix!);
+        // owner and dedicated product as answered; the usual supplier is this delivery's
+        const values = { code, name: itemName, categoryId: category.id, subType, specs: newSpecs, ...extras.values, supplierId };
+        const item = await tx.item.create({ data: { ...values, specs: JSON.stringify(newSpecs) } });
         await auditCreate(tx, {
           userId: user.id,
           table: "Item",
           recordId: item.id,
-          values: { code, name: itemName, categoryId: category.id, specs: newSpecs },
+          values,
           reason: "Created while receiving",
         });
         if (saved.specSheet) await createDocument(tx, user.id, saved.specSheet, "Spec sheet", { itemId: item.id });

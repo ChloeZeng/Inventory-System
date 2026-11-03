@@ -17,7 +17,10 @@ const FIELD_LABELS: Record<string, string> = {
   code: "Item code",
   legacyCode: "Code in old spreadsheet",
   categoryId: "Category",
-  specs: "Specs",
+  specs: "Description",
+  subType: "Type",
+  owner: "Owner",
+  dedicatedProduct: "Dedicated product",
   // supplier
   aslApproved: "ASL approved",
   contactName: "Contact name",
@@ -138,7 +141,7 @@ async function nameMaps(rows: AuditLog[]) {
 
   const lotName = (l: (typeof lots)[number]) => l.supplierBatchNo ?? l.lotNo ?? `Lot #${l.id}`;
   const fk: Record<string, Map<number, string>> = {
-    categoryId: new Map(categories.map((c) => [c.id, c.name])),
+    categoryId: new Map(categories.map((c) => [c.id, c.formNo ? `${c.formNo} · ${c.name}` : c.name])),
     supplierId: new Map(suppliers.map((s) => [s.id, s.name])),
     itemId: new Map(items.map((i) => [i.id, `${i.code} ${i.name}`])),
     receiptId: new Map(receipts.map((r) => [r.id, r.receivingNo])),

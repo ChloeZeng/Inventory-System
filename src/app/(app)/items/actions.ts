@@ -4,7 +4,8 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/current-user";
-import { parseCategoryConfig, parseSpecs, sameSpecs, type CategoryConfig } from "@/lib/category-config";
+import { itemCodePrefix, parseCategoryConfig, parseSpecs, sameSpecs, type CategoryConfig } from "@/lib/category-config";
+import { readItemExtras } from "@/lib/item-fields";
 import { nextItemCode } from "@/lib/numbering";
 import { auditCreate, auditUpdate } from "@/lib/audit";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
@@ -32,8 +33,15 @@ export async function createItem(_prev: ActionState, formData: FormData): Promis
     const category = await prisma.category.findUnique({ where: { id: categoryId } });
     if (!category) return { error: "Pick a category." };
     const config = parseCategoryConfig(category.config);
+    // e.g. Silica: "Canister or packet?" decides the prefix (IC-SGC / IC-SGP)
+    const subType = config.subTypes.length ? str(formData, "subType") : null;
+    const prefix = itemCodePrefix(category, config, subType);
+    if (!prefix) return { error: `Choose ${config.subTypes.map((t) => t.label.toLowerCase()).join(" or ")} first.` };
 
     const { specs, fieldErrors } = readSpecs(config, formData);
+    const suppliers = await prisma.supplier.findMany({ select: { id: true } });
+    const extras = readItemExtras(formData, suppliers.map((x) => x.id));
+    Object.assign(fieldErrors, extras.fieldErrors);
     const name = str(formData, "name") ?? Object.values(specs).join(" ");
     if (!name) fieldErrors.name = "Name is required.";
     if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
@@ -41,7 +49,7 @@ export async function createItem(_prev: ActionState, formData: FormData): Promis
     // A new code is only for a new item TYPE. Catch the common mistake of
     // creating a second code for the same lid when a new batch arrives.
     if (config.specFields.length) {
-      const existing = await prisma.item.findMany({ where: { categoryId, active: true } });
+      const existing = await prisma.item.findMany({ where: { categoryId, subType, active: true } });
       const dup = existing.find((i) => sameSpecs(parseSpecs(i.specs), specs));
       if (dup)
         return {
@@ -54,15 +62,15 @@ export async function createItem(_prev: ActionState, formData: FormData): Promis
     const legacyCode = str(formData, "legacyCode");
 
     itemId = await prisma.$transaction(async (tx) => {
-      const code = await nextItemCode(tx, category.codePrefix);
+      const code = await nextItemCode(tx, prefix);
       const item = await tx.item.create({
-        data: { code, name, legacyCode, categoryId, specs: JSON.stringify(specs) },
+        data: { code, name, legacyCode, categoryId, subType, specs: JSON.stringify(specs), ...extras.values },
       });
       await auditCreate(tx, {
         userId: user.id,
         table: "Item",
         recordId: item.id,
-        values: { code, name, legacyCode, categoryId, specs },
+        values: { code, name, legacyCode, categoryId, subType, specs, ...extras.values },
       });
       if (saved) await createDocument(tx, user.id, saved, "Spec sheet", { itemId: item.id });
       return item.id;
@@ -81,6 +89,9 @@ export async function updateItem(itemId: number, _prev: ActionState, formData: F
     const config = parseCategoryConfig(item.category.config);
 
     const { specs, fieldErrors } = readSpecs(config, formData);
+    const suppliers = await prisma.supplier.findMany({ select: { id: true } });
+    const extras = readItemExtras(formData, suppliers.map((x) => x.id));
+    Object.assign(fieldErrors, extras.fieldErrors);
     const name = str(formData, "name");
     if (!name) fieldErrors.name = "Name is required.";
     if (!name || Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
@@ -89,9 +100,12 @@ export async function updateItem(itemId: number, _prev: ActionState, formData: F
       name: item.name,
       legacyCode: item.legacyCode,
       specs: parseSpecs(item.specs),
+      owner: item.owner,
+      dedicatedProduct: item.dedicatedProduct,
+      supplierId: item.supplierId,
       active: item.active,
     };
-    const after = { name, legacyCode: str(formData, "legacyCode"), specs, active: bool(formData, "active") };
+    const after = { name, legacyCode: str(formData, "legacyCode"), specs, ...extras.values, active: bool(formData, "active") };
 
     const changed = await prisma.$transaction(async (tx) => {
       const n = await auditUpdate(tx, {

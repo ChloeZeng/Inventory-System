@@ -37,6 +37,10 @@ export const DOCUMENT_TYPES = [
   "Spec sheet",
   "Photo",
   "F.WD.001",
+  "Internal test result",
+  "ID test result",
+  "Microbiology test result",
+  "Heavy metals test result",
   "Supplier questionnaire",
   "Supplier agreement",
   "Other",
@@ -44,7 +48,18 @@ export const DOCUMENT_TYPES = [
 export type DocumentType = (typeof DOCUMENT_TYPES)[number];
 
 // Which document types each upload form offers.
-export const LOT_DOCUMENT_TYPES = ["COA", "Packing list", "Invoice", "Photo", "F.WD.001", "Other"] as const;
+export const LOT_DOCUMENT_TYPES = [
+  "COA",
+  "Packing list",
+  "Invoice",
+  "Photo",
+  "F.WD.001",
+  "Internal test result",
+  "ID test result",
+  "Microbiology test result",
+  "Heavy metals test result",
+  "Other",
+] as const;
 export const ITEM_DOCUMENT_TYPES = ["Spec sheet", "Other"] as const;
 export const SUPPLIER_DOCUMENT_TYPES = ["Supplier questionnaire", "Supplier agreement", "Other"] as const;
 // Uploaded from a lot page but filed on the whole delivery (receipt).
@@ -68,4 +83,24 @@ export function transactionTypeLabel(value: string) {
   return TRANSACTION_TYPES.find((t) => t.value === value)?.label ?? value;
 }
 
-export const TEST_PATHS = [{ value: "ansi_sampling", label: "ANSI Z1.4 sampling (F.WD.003)" }] as const;
+// How a category's lots are tested before release. A category stores the key (Category.testPath);
+// what is actually required is in its requirements (Category.config), so the label here only
+// describes the path. `ansiSampling`: the F.WD.003 inspection uses the ANSI Z1.4 sampling plan.
+export const TEST_PATHS = [
+  { value: "ansi_sampling", label: "ANSI Z1.4 sampling (F.WD.003)", ansiSampling: true },
+  { value: "coa_or_internal_ansi", label: "COA or internal test + ANSI sampling", ansiSampling: true },
+  { value: "coa_ansi", label: "COA + ANSI sampling", ansiSampling: true },
+  { value: "lab_testing", label: "Lab testing: ID, microbiology, heavy metals", ansiSampling: false },
+  { value: "coa_lab_testing", label: "Supplier COA + ID, microbiology, heavy metals testing", ansiSampling: false },
+] as const;
+
+export function testPathLabel(value: string | null | undefined) {
+  return TEST_PATHS.find((t) => t.value === value)?.label ?? null;
+}
+
+export function usesAnsiSampling(testPath: string | null | undefined) {
+  return TEST_PATHS.some((t) => t.value === testPath && t.ansiSampling);
+}
+
+// Who owns an item's stock when it is not a client's.
+export const SVLSG_OWNER = "SVLSG";

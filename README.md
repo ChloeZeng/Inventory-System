@@ -13,10 +13,50 @@ Requires **Node 20.9+** (`.nvmrc` pins 22).
 nvm use            # switches to Node 22
 npm install
 npm run setup      # creates .env, builds prisma/dev.db, loads seed data
+npm run seed:demo  # optional: CLEARS the local database and loads demo items and lots for every category
 npm run dev        # http://localhost:3000
 ```
 
-The first visit opens a short welcome: pick who you are (demo users: Warehouse Demo, QC Demo, Admin Demo), see what you can do, then take the 3-step tour of Home. Switch users or reopen the tour from the bottom of the sidebar.
+The first visit opens a short welcome: pick who you are (demo users: **QC** — QC authorized; **Admin 1**, **Admin 2**, **Admin 3** — not QC authorized), see what you can do, then take the 3-step tour of Home. Switch users or reopen the tour from the bottom of the sidebar.
+
+### Demo data (`npm run seed:demo`)
+
+For demos only. It deletes every row, then loads all ten categories with 2–3 items each and 1–2 lots each in
+different states: awaiting inspection, inspection draft waiting for QC, ready for release, missing documents
+(lab results, COA, packing list, spec sheet), a quantity difference for QC to resolve, released, and in use.
+It includes two real examples: C-BOT-001 (150ml PET Amber, owned by LiQi, dedicated to EGUOO-Milk Thistle,
+lot LQ401263093, 99,540 of 142,800 used in #6 Packaging) and C-LID-010 (38mm White PP, lot MDLSM2605131-01,
+1241 Alderwood). Every other supplier, item and lot is demo data, and the documents are placeholder files marked DEMO.
+
+The script **refuses to run** unless `DATABASE_URL` is a local SQLite file directly inside `prisma/` (not a
+`postgres://` URL, not a file whose name contains "prod") and `NODE_ENV` is not `production`
+(`src/lib/demo-guard.ts`). Never point it at production data.
+
+### Categories
+
+The ten inventory categories are data (`prisma/catalog.ts` seeds them into the `Category` table), shown with their
+form number, e.g. "F.IV.004 · Lids". Each one stores its code prefix, sub-types, unit, test path and required
+fields, so they can be edited later without code changes. Item codes are always uppercase `PREFIX-###`.
+
+| Form | Category | Code | Unit | Testing before release |
+|---|---|---|---|---|
+| F.IV.001 | Raw Ingredients | RM-001 | kg | Lab testing: ID, microbiology, heavy metals |
+| F.IV.002 | Capsule Shells | C-CAP-001 | units | COA or internal test + ANSI sampling |
+| F.IV.003 | Bottles | C-BOT-001 | units | ANSI sampling |
+| F.IV.004 | Lids | C-LID-001 | units | ANSI sampling |
+| F.IV.005 | Labels | C-LBL-001 | units | ANSI sampling |
+| F.IV.006 | Shipper Packs | C-SP-001 | units | ANSI sampling |
+| F.IV.007 | Cardboards | C-CB-001 | units | ANSI sampling |
+| F.IV.008 | Silica | canister IC-SGC-001, packet IC-SGP-001 | units | COA + ANSI sampling |
+| F.IV.009 | Scoops | IC-SCOOP-001 | units | ANSI sampling |
+| F.IV.010 | Tablets | C-TB-001 | tablets | Supplier COA + ID, microbiology, heavy metals |
+
+A new Silica item first asks "Canister or packet?"; the answer sets the prefix. Tablets are the purchased route only
+(received through the wizard); in-house tablets will come from a future production module.
+
+Items have a **description** (size, material, color), an **owner** (SVLSG or a client), an optional **dedicated
+product** and a **usual supplier** (separate from the owner). Recording production use of an item for a product other
+than its dedicated product shows a warning and needs a reason, which is saved in the audit trail.
 
 ### Users and QC authorization
 
@@ -29,9 +69,10 @@ The first visit opens a short welcome: pick who you are (demo users: Warehouse D
 | Command | What it does |
 |---|---|
 | `npm run dev` | Start the app with hot reload |
-| `npm test` | Unit tests (node:test via tsx): workflow selector, inspection rules |
+| `npm test` | Unit tests (node:test via tsx): workflow selector, inspection rules, demo guard, wording |
 | `npm run db:refresh-workflow` | Recompute every lot's workflow cache (run after changing category requirements) |
-| `npm run db:seed` | Re-run seed data (safe to repeat) |
+| `npm run db:seed` | Re-run seed data (safe to repeat; never deletes) |
+| `npm run seed:demo` | **Demo only:** clear the local database and load demo data (refuses anything but a local SQLite file in `prisma/`) |
 | `npm run db:reset` | **Wipe** the local database and re-seed |
 | `npm run db:migrate` | After editing `prisma/schema.prisma`: create and apply a migration |
 | `npm run db:studio` | Browse the database in a web UI |
@@ -40,7 +81,10 @@ The first visit opens a short welcome: pick who you are (demo users: Warehouse D
 
 ```
 prisma/schema.prisma   data model (spec §2)
-prisma/seed.ts         users, locations, rooms, categories + Lids config, suppliers, ANSI Z1.4 tables
+prisma/catalog.ts      the ten categories (form no., prefix, sub-types, unit, test path, requirements), locations,
+                       demo users, ANSI Z1.4 tables — shared by the seed and the demo reset
+prisma/seed.ts         baseline seed (upserts only)
+scripts/seed-demo.ts   demo reset (npm run seed:demo) — clears the database first, guarded
 src/lib/               prisma client, numbering (item codes, REC-YYYY-###), audit log + readable formatting,
                        uploads, category config, completeness engine, lot progress, ANSI sampling plan, to-dos
 src/components/detail/ detail-page kit (sticky header, what's next card, requirements panel with one-field Fix modals,
@@ -75,7 +119,7 @@ uploads/               uploaded files (git-ignored)
 - [ ] 7. AuditLog on every create/update
 - [ ] 8. Export
 
-After pulling changes run `npm run db:migrate` then `npm run db:seed`. The migrations convert old roles: former "qc" users become QC authorized, warehouse/qc roles become "user", and both changes are written to the audit trail.
+After pulling changes run `npm run db:migrate` then `npm run db:seed`. The migrations convert old roles: former "qc" users become QC authorized, warehouse/qc roles become "user", and both changes are written to the audit trail. The seed updates existing categories in place (old prefixes R, C-LABEL and INT-C-SP become RM, C-LBL and Silica; existing item codes are kept) and deactivates the old demo users Warehouse Demo and Admin Demo (they may own history, so they are not deleted).
 
 ### Workflow cache
 
@@ -92,4 +136,4 @@ export DATABASE_URL="file:./test-scale.db"
 npx prisma migrate deploy && npx prisma db seed && npx tsx scripts/seed-synthetic.ts 1200
 ```
 
-The ANSI Z1.4 tables in `prisma/seed.ts` must be checked by QA against the printed standard before use.
+The ANSI Z1.4 tables in `prisma/catalog.ts` must be checked by QA against the printed standard before use.

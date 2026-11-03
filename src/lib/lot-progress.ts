@@ -2,6 +2,7 @@
 // and what the next thing to do is. Pure, so lists and pages agree.
 
 import { stageCounts, type CheckSummary } from "./completeness";
+import { plural } from "./text";
 
 export const LOT_STEPS = ["Receive", "Quarantine", "Inspect", "Release", "In use"] as const;
 
@@ -24,7 +25,6 @@ export type LotProgress = {
   nextLabel: string;
 };
 
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 // Every number here comes from stageCounts / summary (countResults), the same
 // calculation the checklist and the Release panel show.

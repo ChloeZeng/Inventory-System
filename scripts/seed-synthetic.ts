@@ -34,7 +34,7 @@ function weighted<T extends string>(table: readonly (readonly [T, number])[]): T
 }
 
 async function main() {
-  const [wh, qc] = await Promise.all([prisma.user.findFirstOrThrow({ where: { initials: "WH" } }), prisma.user.findFirstOrThrow({ where: { initials: "QC" } })]);
+  const [wh, qc] = await Promise.all([prisma.user.findFirstOrThrow({ where: { initials: "A1" } }), prisma.user.findFirstOrThrow({ where: { initials: "QC" } })]);
   const supplier = await prisma.supplier.findFirstOrThrow({ where: { aslApproved: true, type: "svlsg" } });
   const locations = await prisma.location.findMany();
   const categories = await prisma.category.findMany();

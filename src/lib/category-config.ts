@@ -1,6 +1,7 @@
-// Per-category configuration, stored as JSON in Category.config.
-// Adding a new category (e.g. Raw Ingredients) means adding data here via seed/admin,
-// not writing new `if (category === ...)` branches.
+// Per-category configuration, stored as JSON in Category.config (plus the formNo,
+// sortOrder, codePrefix, unit and testPath columns). The categories themselves are data
+// (prisma/catalog.ts seeds them): changing a prefix, sub-type, unit, test path or required
+// field means editing data, not writing new `if (category === ...)` branches.
 
 export type SpecField = {
   key: string;
@@ -57,7 +58,14 @@ export type RequirementOwner = "anyone" | "qc" | "warehouse" | "admin";
 // must be recorded as a defect with a class.
 export type InspectionQuestion = { key: string; label: string; group?: string };
 
+// A category split into kinds that get their own code prefix, e.g. Silica:
+// canister → IC-SGC-001, packet → IC-SGP-001. A new item of such a category starts
+// with "Which kind?" and the answer decides its code.
+export type SubType = { key: string; label: string; codePrefix: string };
+
 export type CategoryConfig = {
+  subTypes: SubType[];
+  // the item's description (size, material, color…)
   specFields: SpecField[];
   requirements: Record<Stage, Requirement[]>;
   // checklist shown on each item of this category (e.g. spec sheet on file)
@@ -67,6 +75,7 @@ export type CategoryConfig = {
 };
 
 const EMPTY: CategoryConfig = {
+  subTypes: [],
   specFields: [],
   requirements: { at_receiving: [], before_release: [] },
   itemRequirements: [],
@@ -78,6 +87,7 @@ export function parseCategoryConfig(json: string | null | undefined): CategoryCo
   try {
     const raw = JSON.parse(json) as Partial<CategoryConfig>;
     return {
+      subTypes: raw.subTypes ?? [],
       specFields: raw.specFields ?? [],
       requirements: {
         at_receiving: raw.requirements?.at_receiving ?? [],
@@ -113,3 +123,30 @@ export function sameSpecs(a: Record<string, string>, b: Record<string, string>) 
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   return [...keys].every((k) => (a[k] ?? "").trim().toLowerCase() === (b[k] ?? "").trim().toLowerCase());
 }
+
+// "F.IV.004 · Lids" — the inventory form number labels the category everywhere.
+export function categoryLabel(c: { formNo?: string | null; name: string }) {
+  return c.formNo ? `${c.formNo} · ${c.name}` : c.name;
+}
+
+// The code prefix for a new item: the sub-type's when the category has sub-types
+// (null when the sub-type is missing or unknown), else the category's.
+export function itemCodePrefix(category: { codePrefix: string }, config: CategoryConfig, subType?: string | null) {
+  if (!config.subTypes.length) return category.codePrefix;
+  return config.subTypes.find((t) => t.key === subType)?.codePrefix ?? null;
+}
+
+export function subTypeLabel(config: CategoryConfig, subType: string | null | undefined) {
+  return config.subTypes.find((t) => t.key === subType)?.label ?? null;
+}
+
+// "unit", "kg", "tablet" — for "per unit", "per kg".
+export function unitSingular(unit = "units") {
+  return unit !== "kg" && unit.endsWith("s") ? unit.slice(0, -1) : unit;
+}
+
+// Quantity with the category's unit: "1 unit", "142,800 units", "25 kg", "1 tablet".
+export function formatQty(n: number, unit = "units") {
+  return `${n.toLocaleString()} ${Math.abs(n) === 1 ? unitSingular(unit) : unit}`;
+}
+
