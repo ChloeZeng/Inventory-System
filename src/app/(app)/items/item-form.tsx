@@ -4,15 +4,26 @@ import { useActionState } from "react";
 import type { SpecField } from "@/lib/category-config";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass } from "@/components/ui";
+import { DescriptionFields, ItemExtrasFields } from "./item-fields";
 
 type Props = {
   action: (prev: ActionState, formData: FormData) => Promise<ActionState>;
   specFields: SpecField[];
+  suppliers: { id: number; name: string }[];
   categoryId?: number; // create mode
-  initial?: { name: string; legacyCode: string | null; specs: Record<string, string>; active: boolean }; // edit mode
+  subType?: string; // create mode, categories with sub-types (e.g. Silica: canister / packet)
+  initial?: {
+    name: string;
+    legacyCode: string | null;
+    specs: Record<string, string>;
+    active: boolean;
+    owner: string;
+    dedicatedProduct: string | null;
+    supplierId: number | null;
+  }; // edit mode
 };
 
-export function ItemForm({ action, specFields, categoryId, initial }: Props) {
+export function ItemForm({ action, specFields, suppliers, categoryId, subType, initial }: Props) {
   const [state, formAction, pending] = useActionState(action, {});
   const isEdit = !!initial;
   const fe = state.fieldErrors ?? {};
@@ -20,31 +31,21 @@ export function ItemForm({ action, specFields, categoryId, initial }: Props) {
   return (
     <form action={formAction} className="space-y-4">
       {categoryId && <input type="hidden" name="categoryId" value={categoryId} />}
+      {subType && <input type="hidden" name="subType" value={subType} />}
 
-      {specFields.map((f) => (
-        <Field key={f.key} label={f.label} htmlFor={`spec_${f.key}`} required={f.required} error={fe[`spec_${f.key}`]}>
-          {f.type === "select" && f.options ? (
-            <select id={`spec_${f.key}`} name={`spec_${f.key}`} className={inputClass} defaultValue={initial?.specs[f.key] ?? ""}>
-              <option value="">—</option>
-              {f.options.map((o) => (
-                <option key={o}>{o}</option>
-              ))}
-            </select>
-          ) : (
-            <input id={`spec_${f.key}`} name={`spec_${f.key}`} className={inputClass} defaultValue={initial?.specs[f.key] ?? ""} />
-          )}
-        </Field>
-      ))}
+      <DescriptionFields specFields={specFields} values={initial?.specs} errors={fe} />
 
       <Field
         label="Item name"
         htmlFor="name"
         required={isEdit}
-        hint={isEdit ? undefined : "Leave blank to build it from the specs above."}
+        hint={isEdit ? undefined : "Leave blank to build it from the description above."}
         error={fe.name}
       >
         <input id="name" name="name" className={inputClass} defaultValue={initial?.name ?? ""} />
       </Field>
+
+      <ItemExtrasFields suppliers={suppliers} initial={initial} errors={fe} />
 
       <Field label="Code in old spreadsheet" htmlFor="legacyCode" hint="Optional, e.g. C-Lids-010-38mm">
         <input id="legacyCode" name="legacyCode" className={inputClass} defaultValue={initial?.legacyCode ?? ""} />

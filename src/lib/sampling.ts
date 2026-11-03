@@ -1,5 +1,5 @@
 // ANSI/ASQ Z1.4 single sampling plan, normal inspection (spec §4.2).
-// Tables are seed data (prisma/seed.ts) — QA must verify them against the printed standard.
+// Tables are seed data (prisma/catalog.ts) — QA must verify them against the printed standard.
 
 import type { PrismaClient } from "@prisma/client";
 

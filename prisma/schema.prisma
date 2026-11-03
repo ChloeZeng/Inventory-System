@@ -58,15 +58,20 @@ model Room {
   @@unique([locationId, name])
 }
 
+// Category settings are data (seeded from prisma/catalog.ts) so they can be edited later
+// without code changes: form no., order, unit, code prefix, sub-types, test path, required fields.
 model Category {
   id         Int        @id @default(autoincrement())
+  formNo     String?    @unique // inventory form, e.g. F.IV.004 — shown as "F.IV.004 · Lids"
+  sortOrder  Int        @default(0)
   name       String     @unique
-  codePrefix String     @unique // e.g. C-LID
+  codePrefix String     @unique // e.g. C-LID (categories with sub-types take the prefix from the sub-type)
+  unit       String     @default("units") // what quantities are counted in: units | kg | tablets
   parentId   Int?
   parent     Category?  @relation("CategoryTree", fields: [parentId], references: [id])
   children   Category[] @relation("CategoryTree")
-  testPath   String? // e.g. ansi_sampling (F.WD.003)
-  // JSON: { specFields: [...], requirements: { at_receiving: [...], before_release: [...] } }
+  testPath   String? // key of TEST_PATHS (src/lib/constants.ts), e.g. ansi_sampling (F.WD.003)
+  // JSON: { subTypes, specFields, requirements: { at_receiving, before_release }, itemRequirements, inspectionChecklist }
   // See src/lib/category-config.ts
   config     String     @default("{}")
   items      Item[]
@@ -84,6 +89,7 @@ model Supplier {
   active      Boolean    @default(true)
   createdAt   DateTime   @default(now())
   receipts    Receipt[]
+  items       Item[] // items this supplier usually supplies (Item.supplierId)
   documents   Document[] // questionnaire F.QC.009, agreement F.QC.015
 }
 
@@ -95,7 +101,15 @@ model Item {
   name       String
   categoryId Int
   category   Category   @relation(fields: [categoryId], references: [id])
-  specs      String     @default("{}") // JSON of category specFields, e.g. {"size":"38mm"}
+  subType    String? // key of the category's sub-type, e.g. "canister" (Silica); sets the code prefix
+  specs      String     @default("{}") // description: JSON of category specFields, e.g. {"size":"38mm","material":"PP","color":"White"}
+  // Who owns the stock — "SVLSG" or a client's name. Not the same as the supplier.
+  owner            String    @default("SVLSG")
+  // Optional: the product this item is reserved for. Usage for another product needs a reason.
+  dedicatedProduct String?
+  // Usual supplier (each receipt still records who actually delivered).
+  supplierId       Int?
+  supplier         Supplier? @relation(fields: [supplierId], references: [id])
   active     Boolean    @default(true)
   createdAt  DateTime   @default(now())
   lots       Lot[]

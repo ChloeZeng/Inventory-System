@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { parseCategoryConfig, parseSpecs } from "@/lib/category-config";
+import { categoryLabel, formatQty, parseCategoryConfig, parseSpecs, subTypeLabel } from "@/lib/category-config";
+import { testPathLabel } from "@/lib/constants";
 import { getCurrentUser } from "@/lib/current-user";
 import Link from "next/link";
 import { ITEM_DOCUMENT_TYPES } from "@/lib/constants";
@@ -27,13 +28,17 @@ export default async function ItemDetailPage({
     where: { id },
     include: {
       category: true,
+      supplier: { select: { id: true, name: true } },
       documents: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
       lots: { include: { receipt: true }, orderBy: { createdAt: "desc" } },
     },
   });
   if (!item) notFound();
 
-  const user = await getCurrentUser();
+  const [user, suppliers] = await Promise.all([
+    getCurrentUser(),
+    prisma.supplier.findMany({ where: { OR: [{ active: true }, { id: item.supplierId ?? -1 }] }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+  ]);
   const config = parseCategoryConfig(item.category.config);
   const specs = parseSpecs(item.specs);
   const hasSpecSheet = item.documents.some((d) => d.type === "Spec sheet");
@@ -53,7 +58,8 @@ export default async function ItemDetailPage({
         }
         subtitle={
           <>
-            {item.category.name}
+            {categoryLabel(item.category)}
+            {item.subType && <> · {subTypeLabel(config, item.subType)}</>}
             {item.legacyCode && (
               <>
                 {" "}
@@ -73,7 +79,38 @@ export default async function ItemDetailPage({
             <Checklist summary={checklist} ctx={{ itemId: item.id }} canFix={!!user} />
           </Card>
 
-          <Card title="Specs">
+          <Card title="Item details">
+            <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+              <div>
+                <dt className="text-slate-500">Owner</dt>
+                <dd className="font-medium">{item.owner}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Dedicated product</dt>
+                <dd className="font-medium">{item.dedicatedProduct ?? <span className="font-normal text-slate-500">none</span>}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Usual supplier</dt>
+                <dd className="font-medium">
+                  {item.supplier ? (
+                    <Link href={`/suppliers/${item.supplier.id}`} className="text-sky-700 hover:underline">
+                      {item.supplier.name}
+                    </Link>
+                  ) : (
+                    <span className="font-normal text-slate-500">not set</span>
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Counted in</dt>
+                <dd className="font-medium">{item.category.unit}</dd>
+              </div>
+              <div className="col-span-2">
+                <dt className="text-slate-500">Testing before release</dt>
+                <dd className="font-medium">{testPathLabel(item.category.testPath) ?? "—"}</dd>
+              </div>
+            </dl>
+            <h3 className="mb-2 mt-5 text-sm font-semibold text-slate-800">Description</h3>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
               {config.specFields.map((f) => (
                 <div key={f.key}>
@@ -132,7 +169,7 @@ export default async function ItemDetailPage({
                     </td>
                     <td className="px-4 py-2 font-mono">{l.receipt.receivingNo}</td>
                     <td className="px-4 py-2">{formatDate(l.receipt.dateReceived)}</td>
-                    <td className="px-4 py-2 tabular-nums">{l.qtyReceived.toLocaleString()}</td>
+                    <td className="px-4 py-2 tabular-nums">{formatQty(l.qtyReceived, item.category.unit)}</td>
                     <td className="px-4 py-2">
                       <QcStatusBadge status={l.qcStatus} />
                     </td>
@@ -145,13 +182,22 @@ export default async function ItemDetailPage({
 
         <Card title="Edit item" className="self-start">
           <p className="mb-4 text-xs text-slate-500">
-            The code <span className="font-mono">{item.code}</span> and category are permanent.
+            The code <span className="font-mono">{item.code}</span> and category{item.subType ? " (and type)" : ""} are permanent.
           </p>
           {user ? (
             <ItemForm
               action={updateItem.bind(null, item.id)}
               specFields={config.specFields}
-              initial={{ name: item.name, legacyCode: item.legacyCode, specs, active: item.active }}
+              suppliers={suppliers}
+              initial={{
+                name: item.name,
+                legacyCode: item.legacyCode,
+                specs,
+                active: item.active,
+                owner: item.owner,
+                dedicatedProduct: item.dedicatedProduct,
+                supplierId: item.supplierId,
+              }}
             />
           ) : (
             <p className="text-sm text-amber-700">Pick a user in the top bar to edit.</p>

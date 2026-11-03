@@ -7,13 +7,14 @@ import { requireQcAuthorized, requireUser } from "@/lib/current-user";
 import { releaseReadiness } from "@/lib/completeness";
 import { LOT_INCLUDE, lotStatus } from "@/lib/records";
 import { refreshLotWorkflow } from "@/lib/workflow";
-import { parseCategoryConfig } from "@/lib/category-config";
+import { formatQty, parseCategoryConfig } from "@/lib/category-config";
+import { differsFromDedicated } from "@/lib/item-fields";
 import { confirmErrors, defectCounts, readInspectionForm } from "@/lib/inspection";
 import { calculatedDisposition, loadAnsiTables, samplingPlan } from "@/lib/sampling";
 import { auditCreate, auditUpdate } from "@/lib/audit";
 import { createDocument } from "@/lib/documents";
 import { fileFromForm, saveUpload } from "@/lib/uploads";
-import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION, USAGE_TYPES } from "@/lib/constants";
+import { LOT_DOCUMENT_TYPES, RECEIPT_DOCUMENT_TYPES, SEGREGATION, USAGE_TYPES, usesAnsiSampling } from "@/lib/constants";
 import { type ActionState, bool, dateOnly, decimal, errorMessage, int, str, toDateInput, todayDateInput } from "@/lib/forms";
 
 const LABELS: Record<string, string> = {
@@ -263,7 +264,7 @@ export async function saveInspection(lotId: number, _prev: ActionState, formData
     const { values, fieldErrors } = readInspectionForm(formData, questions);
 
     let plan: ReturnType<typeof samplingPlan> | null = null;
-    if (lot.item.category.testPath === "ansi_sampling") {
+    if (usesAnsiSampling(lot.item.category.testPath)) {
       try {
         plan = samplingPlan(await loadAnsiTables(prisma), lot.qtyReceived);
       } catch {
@@ -334,24 +335,32 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
     const type = str(formData, "type") ?? "";
     if (!(USAGE_TYPES as readonly string[]).includes(type)) fieldErrors.type = "Pick what the stock was used for.";
     const qty = int(formData, "qty", 1);
-    if (!qty) fieldErrors.qty = "Enter a whole number of units (1 or more).";
+    if (!qty) fieldErrors.qty = "Enter a whole number (1 or more).";
     const date = dateOnly(formData, "date");
     if (!date) fieldErrors.date = "Enter the date of use.";
     else if (toDateInput(date) > todayDateInput()) fieldErrors.date = "The date cannot be in the future.";
     const productOrCustomer = str(formData, "productOrCustomer");
     if (!productOrCustomer) fieldErrors.productOrCustomer = "Enter the product, customer or reference.";
     const roomId = Number(formData.get("roomId")) || null;
+    const productReason = str(formData, "productReason");
     const clientRequestId = str(formData, "clientRequestId");
     if (!clientRequestId) return { error: "The form is out of date — reload the page and try again." };
     if (Object.keys(fieldErrors).length) return { error: "Please fix the highlighted fields.", fieldErrors };
 
     const result = await prisma.$transaction(async (tx) => {
       if (await tx.inventoryTransaction.findUnique({ where: { clientRequestId } })) return { duplicate: true as const };
-      const lot = await tx.lot.findUniqueOrThrow({ where: { id: lotId }, include: { transactions: { select: { qty: true } } } });
+      const lot = await tx.lot.findUniqueOrThrow({
+        where: { id: lotId },
+        include: { transactions: { select: { qty: true } }, item: { select: { dedicatedProduct: true, category: { select: { unit: true } } } } },
+      });
       if (lot.qcStatus !== "Released") throw new Error("Only released lots can be used.");
+      // An item reserved for one product: production use for another product needs a reason.
+      const dedicated = lot.item.dedicatedProduct;
+      const otherProduct = type === "production_use" && differsFromDedicated(dedicated, productOrCustomer);
+      if (otherProduct && !productReason) return { needsReason: dedicated! };
       if (roomId && !(await tx.room.findFirst({ where: { id: roomId, locationId: lot.locationId } }))) throw new Error("Pick a room at the lot's location.");
       const balance = lot.transactions.reduce((s, t) => s + t.qty, 0);
-      if (qty! > balance) return { overdraw: balance };
+      if (qty! > balance) return { overdraw: balance, unit: lot.item.category.unit };
 
       const values = {
         lotId,
@@ -367,16 +376,22 @@ export async function recordUsage(lotId: number, _prev: ActionState, formData: F
       const txn = await tx.inventoryTransaction.create({ data: values });
       const audited: Record<string, unknown> = { ...values };
       delete audited.clientRequestId;
-      await auditCreate(tx, { userId: user.id, table: "InventoryTransaction", recordId: txn.id, values: audited });
+      const reason = otherProduct ? `Used for ${productOrCustomer} instead of dedicated product ${dedicated}: ${productReason}` : undefined;
+      await auditCreate(tx, { userId: user.id, table: "InventoryTransaction", recordId: txn.id, values: audited, reason });
       await refreshLotWorkflow(tx, { id: lotId });
-      return { balance: balance - qty! };
+      return { balance: balance - qty!, unit: lot.item.category.unit };
     });
 
+    if ("needsReason" in result)
+      return {
+        error: `This item is dedicated to ${result.needsReason}. Give a reason for using it for ${productOrCustomer}.`,
+        fieldErrors: { productReason: "Required when the product is not the dedicated product." },
+      };
     if ("overdraw" in result)
-      return { error: "Not enough stock.", fieldErrors: { qty: `Only ${result.overdraw!.toLocaleString()} units on hand.` } };
+      return { error: "Not enough stock.", fieldErrors: { qty: `Only ${formatQty(result.overdraw!, result.unit)} on hand.` } };
     revalidatePath("/", "layout");
     if ("duplicate" in result) return { ok: "This usage was already recorded." };
-    return { ok: `Usage recorded. ${result.balance.toLocaleString()} units left.` };
+    return { ok: `Usage recorded. ${formatQty(result.balance, result.unit)} left.` };
   } catch (e) {
     // two submissions of the same form racing: the unique clientRequestId lets only one in
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: "This usage was already recorded." };

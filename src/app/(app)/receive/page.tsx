@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { parseCategoryConfig, parseSpecs } from "@/lib/category-config";
+import { categoryLabel, parseCategoryConfig, parseSpecs } from "@/lib/category-config";
+import { plural } from "@/lib/text";
 import { todayDateInput } from "@/lib/forms";
 import { Card, PageHeader, formatDate } from "@/components/ui";
 import { ReceiveWizard, type WizardData } from "./receive-wizard";
@@ -21,7 +22,7 @@ export default async function ReceivePage({ searchParams }: { searchParams: Prom
     );
 
   const [categories, items, suppliers, locations, receipt] = await Promise.all([
-    prisma.category.findMany({ orderBy: { name: "asc" } }),
+    prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     prisma.item.findMany({
       where: { active: true },
       include: { documents: { select: { type: true } }, _count: { select: { lots: true } } },
@@ -40,7 +41,16 @@ export default async function ReceivePage({ searchParams }: { searchParams: Prom
   const data: WizardData = {
     categories: categories.map((c) => {
       const config = parseCategoryConfig(c.config);
-      return { id: c.id, name: c.name, codePrefix: c.codePrefix, specFields: config.specFields, requirements: config.requirements };
+      return {
+        id: c.id,
+        label: categoryLabel(c),
+        name: c.name,
+        codePrefix: c.codePrefix,
+        unit: c.unit,
+        subTypes: config.subTypes,
+        specFields: config.specFields,
+        requirements: config.requirements,
+      };
     }),
     items: items.map((i) => ({
       id: i.id,
@@ -48,6 +58,10 @@ export default async function ReceivePage({ searchParams }: { searchParams: Prom
       name: i.name,
       legacyCode: i.legacyCode,
       categoryId: i.categoryId,
+      subType: i.subType,
+      owner: i.owner,
+      dedicatedProduct: i.dedicatedProduct,
+      supplierId: i.supplierId,
       specs: parseSpecs(i.specs),
       docTypes: i.documents.map((d) => d.type),
       lotCount: i._count.lots,
@@ -81,8 +95,8 @@ export default async function ReceivePage({ searchParams }: { searchParams: Prom
         subtitle={
           receipt ? (
             <>
-              {receipt.supplier.name} · received {formatDate(receipt.dateReceived)} · already {receipt._count.lots} lot
-              {receipt._count.lots === 1 ? "" : "s"}. <Link href="/receive" className="text-sky-700 hover:underline">Start a new delivery instead</Link>
+              {receipt.supplier.name} · received {formatDate(receipt.dateReceived)} · already {plural(receipt._count.lots, "lot")}.{" "}
+              <Link href="/receive" className="text-sky-700 hover:underline">Start a new delivery instead</Link>
             </>
           ) : (
             "Answer one question at a time. Everything lands in Quarantine until QC releases it."

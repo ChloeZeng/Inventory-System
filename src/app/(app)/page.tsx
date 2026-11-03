@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { categoryLabel } from "@/lib/category-config";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { ownerOfOpen } from "@/lib/completeness";
@@ -25,7 +26,7 @@ export default async function HomePage({
   if (!user) redirect("/welcome?step=who");
 
   const filters: ListFilters = { q: sp.q?.trim() || undefined, categoryId: Number(sp.category) || undefined };
-  const [counts, categories] = await Promise.all([queueCounts(user, filters), prisma.category.findMany({ orderBy: { name: "asc" } })]);
+  const [counts, categories] = await Promise.all([queueCounts(user, filters), prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] })]);
 
   // default: the first queue with work this user can do, else the first with any work
   const requested = QUEUE_KEYS.find((k) => k === sp.queue);
@@ -94,7 +95,7 @@ export default async function HomePage({
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}
+              {categoryLabel(c)}
             </option>
           ))}
         </select>

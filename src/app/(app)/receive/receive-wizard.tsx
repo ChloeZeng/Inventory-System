@@ -1,22 +1,37 @@
 "use client";
 
 import { startTransition, useActionState, useRef, useState } from "react";
-import type { Requirement, SpecField, Stage } from "@/lib/category-config";
-import { sameSpecs } from "@/lib/category-config";
+import type { Requirement, SpecField, Stage, SubType } from "@/lib/category-config";
+import { formatQty, sameSpecs, unitSingular } from "@/lib/category-config";
+import { plural } from "@/lib/text";
 import { evaluate, type CheckResult, type Facts } from "@/lib/completeness";
 import { SEGREGATION, SUPPLIER_TYPES, segregationLabel, supplierTypeLabel } from "@/lib/constants";
 import type { ActionState } from "@/lib/forms";
 import { Badge, Field, FormMessage, buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
 import { receiveDelivery } from "./actions";
+import { DescriptionFields, ItemExtrasFields, type ExtrasValue } from "../items/item-fields";
 
 export type WizardData = {
-  categories: { id: number; name: string; codePrefix: string; specFields: SpecField[]; requirements: Record<Stage, Requirement[]> }[];
+  categories: {
+    id: number;
+    label: string; // "F.IV.004 · Lids"
+    name: string;
+    codePrefix: string;
+    unit: string; // units | kg | tablets
+    subTypes: SubType[];
+    specFields: SpecField[];
+    requirements: Record<Stage, Requirement[]>;
+  }[];
   items: {
     id: number;
     code: string;
     name: string;
     legacyCode: string | null;
     categoryId: number;
+    subType: string | null;
+    owner: string;
+    dedicatedProduct: string | null;
+    supplierId: number | null;
     specs: Record<string, string>;
     docTypes: string[];
     lotCount: number;
@@ -68,6 +83,9 @@ const FIELD_STEP: Record<string, StepKey> = {
   quarantineSticker: "storage",
 };
 
+// New-item answers asked on the item step (besides the spec_* description fields).
+const ITEM_FIELDS = ["subType", "ownerClient", "dedicatedProduct"];
+
 // Requirement → the step that answers it, for "Go fix" links on the review screen.
 function stepForRequirement(req: Requirement): StepKey {
   if (req.source === "document") return req.attachedTo === "item" ? "item" : req.attachedTo === "receipt" ? "delivery" : "storage";
@@ -100,8 +118,10 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     itemMode: "existing" as "existing" | "new",
     itemId: null as number | null,
     itemSearch: "",
+    subType: "",
     specs: {} as Record<string, string>,
     itemName: "",
+    extras: { ownerKind: "svlsg", ownerClient: "", dedicatedProduct: "", supplierId: null } as ExtrasValue,
     supplierId: null as number | null,
     supplierType: "",
     dateReceived: data.today,
@@ -125,6 +145,10 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     quarantineSticker: false,
   });
   const set = <K extends keyof typeof d>(k: K, v: (typeof d)[K]) => setD((prev) => ({ ...prev, [k]: v }));
+  const pickSupplier = (id: number) => {
+    const s = data.suppliers.find((x) => x.id === id);
+    return s ? { supplierId: s.id, supplierType: s.type } : {};
+  };
   const [files, setFiles] = useState<Record<FileKey, string | null>>({
     specSheet: null,
     truckFile: null,
@@ -141,7 +165,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     if (state.fieldErrors) {
       setErrors(state.fieldErrors);
       const first = Object.keys(state.fieldErrors)[0];
-      const target = first?.startsWith("spec_") ? "item" : FIELD_STEP[first];
+      const target = first?.startsWith("spec_") || ITEM_FIELDS.includes(first) ? "item" : FIELD_STEP[first];
       const idx = steps.findIndex((s) => s.key === target);
       if (idx >= 0) setStepIdx(idx);
     }
@@ -156,9 +180,14 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
   const unitsPerCase = num(d.unitsPerCase);
   const calculated = cases && unitsPerCase ? cases * unitsPerCase : null;
   const qtyReceived = d.overrideQty ? num(d.qtyReceived) : calculated;
+  const unit = category?.unit ?? "units";
+  const subTypes = category?.subTypes ?? [];
+  const subType = subTypes.find((t) => t.key === d.subType) ?? null;
+  // e.g. Silica: the code prefix comes from "Canister or packet?"
+  const newPrefix = subTypes.length ? (subType?.codePrefix ?? null) : (category?.codePrefix ?? null);
   const duplicate =
-    d.itemMode === "new" && category?.specFields.length
-      ? categoryItems.find((i) => sameSpecs(i.specs, d.specs))
+    d.itemMode === "new" && category?.specFields.length && (!subTypes.length || subType)
+      ? categoryItems.find((i) => (i.subType ?? "") === (subType?.key ?? "") && sameSpecs(i.specs, d.specs))
       : undefined;
 
   const search = d.itemSearch.trim().toLowerCase();
@@ -211,7 +240,9 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
     if (key === "item") {
       if (d.itemMode === "existing" && !item) e.itemId = "Pick the item, or choose “New item” if it is not in the list.";
       if (d.itemMode === "new") {
+        if (subTypes.length && !subType) e.subType = `Answer ${subTypes.map((t) => t.label.toLowerCase()).join(" or ")}.`;
         for (const f of category?.specFields ?? []) if (f.required && !d.specs[f.key]?.trim()) e[`spec_${f.key}`] = `${f.label} is required.`;
+        if (d.extras.ownerKind === "client" && !d.extras.ownerClient.trim()) e.ownerClient = "Enter the client's name.";
         if (duplicate) e.itemId = `${duplicate.code} already has these specs — pick it instead.`;
       }
     }
@@ -228,7 +259,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
       if (!d.supplierBatchNo.trim() && !d.lotNo.trim()) e.supplierBatchNo = "Enter the supplier batch no., the lot no., or both.";
       if (d.mfgDate && d.expDate && d.expDate <= d.mfgDate) e.expDate = "Exp date must be after mfg date.";
       if (!cases) e.cases = "Enter the number of cases (1 or more).";
-      if (!unitsPerCase) e.unitsPerCase = "Enter units per case (1 or more).";
+      if (!unitsPerCase) e.unitsPerCase = `Enter ${unit} per case (1 or more).`;
       if (d.overrideQty) {
         if (!num(d.qtyReceived)) e.qtyReceived = "Enter the actual total.";
         else if (num(d.qtyReceived) !== calculated && !d.qtyOverrideReason.trim()) e.qtyOverrideReason = "Say why the total differs.";
@@ -341,9 +372,12 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                 name="categoryId"
                 value={c.id}
                 checked={d.categoryId === c.id}
-                onChange={() => setD((p) => ({ ...p, categoryId: c.id, itemId: null, specs: {} }))}
-                title={c.name}
-                subtitle={`${c.codePrefix}-### · ${data.items.filter((i) => i.categoryId === c.id).length} items`}
+                onChange={() => setD((p) => ({ ...p, categoryId: c.id, itemId: null, subType: "", specs: {} }))}
+                title={c.label}
+                subtitle={`${c.subTypes.length ? c.subTypes.map((t) => `${t.codePrefix}-###`).join(" / ") : `${c.codePrefix}-###`} · ${plural(
+                  data.items.filter((i) => i.categoryId === c.id).length,
+                  "item",
+                )}`}
               />
             ))}
           </div>
@@ -356,7 +390,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
             <>
               <input
                 className={inputClass}
-                placeholder={`Search ${category.name.toLowerCase()} by code, size, color…`}
+                placeholder={`Search ${category.name.toLowerCase()} by code, size, owner…`}
                 value={d.itemSearch}
                 onChange={(e) => set("itemSearch", e.target.value)}
               />
@@ -367,7 +401,10 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                     name="itemId"
                     value={i.id}
                     checked={d.itemMode === "existing" && d.itemId === i.id}
-                    onChange={() => setD((p) => ({ ...p, itemMode: "existing", itemId: i.id }))}
+                    onChange={() =>
+                      // the item's usual supplier is the likely one for this delivery
+                      setD((p) => ({ ...p, itemMode: "existing", itemId: i.id, ...(!receipt && !p.supplierId && i.supplierId ? pickSupplier(i.supplierId) : {}) }))
+                    }
                     title={
                       <span>
                         <span className="font-mono">{i.code}</span> {i.name}
@@ -375,7 +412,9 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                     }
                     subtitle={
                       <>
-                        {category.specFields.map((f) => i.specs[f.key]).filter(Boolean).join(" · ") || "no specs yet"}
+                        {category.specFields.map((f) => i.specs[f.key]).filter(Boolean).join(" · ") || "no description yet"}
+                        {" · "}owner {i.owner}
+                        {i.dedicatedProduct && <> · for {i.dedicatedProduct}</>}
                         {i.legacyCode && <span className="font-mono"> · {i.legacyCode}</span>}
                         {" · "}
                         {i.docTypes.includes("Spec sheet") ? "spec sheet on file" : "no spec sheet"}
@@ -391,40 +430,31 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                 checked={d.itemMode === "new"}
                 onChange={() => setD((p) => ({ ...p, itemMode: "new", itemId: null }))}
                 title="New item — it is not in the list"
-                subtitle={`Only for a new item type. It gets the next ${category.codePrefix}-### code when you save.`}
+                subtitle={`Only for a new item type. It gets the next ${
+                  subTypes.length ? subTypes.map((t) => `${t.codePrefix}-###`).join(" or ") : `${category.codePrefix}-###`
+                } code when you save.`}
               />
               <FieldError msg={err("itemId")} />
 
               {d.itemMode === "new" && (
                 <div className="space-y-4 rounded-md border border-sky-200 bg-sky-50/50 p-4">
-                  <div className="grid gap-4 sm:grid-cols-3">
-                    {category.specFields.map((f) => (
-                      <Field key={f.key} label={f.label} htmlFor={`spec_${f.key}`} required={f.required} error={err(`spec_${f.key}`)}>
-                        {f.type === "select" && f.options ? (
-                          <select
-                            id={`spec_${f.key}`}
-                            name={`spec_${f.key}`}
-                            className={inputClass}
-                            value={d.specs[f.key] ?? ""}
-                            onChange={(e) => set("specs", { ...d.specs, [f.key]: e.target.value })}
-                          >
-                            <option value="">—</option>
-                            {f.options.map((o) => (
-                              <option key={o}>{o}</option>
-                            ))}
-                          </select>
-                        ) : (
-                          <input
-                            id={`spec_${f.key}`}
-                            name={`spec_${f.key}`}
-                            className={inputClass}
-                            value={d.specs[f.key] ?? ""}
-                            onChange={(e) => set("specs", { ...d.specs, [f.key]: e.target.value })}
-                          />
-                        )}
-                      </Field>
-                    ))}
-                  </div>
+                  {subTypes.length > 0 && (
+                    <Field label={`${subTypes.map((t) => t.label).join(" or ")}?`} required error={err("subType")}>
+                      <div className="flex flex-wrap gap-2">
+                        {subTypes.map((t) => (
+                          <Pill key={t.key} name="subType" value={t.key} checked={d.subType === t.key} onChange={() => set("subType", t.key)}>
+                            {t.label} <span className="font-mono text-xs opacity-75">{t.codePrefix}-###</span>
+                          </Pill>
+                        ))}
+                      </div>
+                    </Field>
+                  )}
+                  <DescriptionFields
+                    specFields={category.specFields}
+                    values={d.specs}
+                    errors={errors}
+                    onChange={(k, v) => set("specs", { ...d.specs, [k]: v })}
+                  />
                   {duplicate && (
                     <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                       <strong>{duplicate.code}</strong> ({duplicate.name}) already has these specs.{" "}
@@ -437,9 +467,11 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                       </button>
                     </div>
                   )}
-                  <Field label="Item name" htmlFor="itemName" hint="Leave blank to build it from the specs above.">
+                  <Field label="Item name" htmlFor="itemName" hint="Leave blank to build it from the description above.">
                     <input id="itemName" name="itemName" className={inputClass} value={d.itemName} onChange={(e) => set("itemName", e.target.value)} />
                   </Field>
+                  {/* the usual supplier is set from this delivery's supplier */}
+                  <ItemExtrasFields suppliers={[]} errors={errors} value={d.extras} onChange={(v) => set("extras", v)} supplierChoice={false} />
                 </div>
               )}
               {/* kept mounted so the chosen file survives moving between steps */}
@@ -557,12 +589,12 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
             <Field label="How many cases?" htmlFor="cases" required error={err("cases")}>
               <input id="cases" name="cases" inputMode="numeric" className={inputClass} value={d.cases} onChange={(e) => set("cases", e.target.value)} />
             </Field>
-            <Field label="How many units per case?" htmlFor="unitsPerCase" required error={err("unitsPerCase")}>
+            <Field label={`How many ${unit} per case?`} htmlFor="unitsPerCase" required error={err("unitsPerCase")}>
               <input id="unitsPerCase" name="unitsPerCase" inputMode="numeric" className={inputClass} value={d.unitsPerCase} onChange={(e) => set("unitsPerCase", e.target.value)} />
             </Field>
           </div>
           <div className="rounded-md bg-slate-50 px-4 py-3">
-            <div className="text-sm text-slate-600">Total units received</div>
+            <div className="text-sm text-slate-600">Total {unit} received</div>
             <div className="text-2xl font-semibold tabular-nums">
               {calculated ? (
                 <>
@@ -578,7 +610,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
             </label>
             {d.overrideQty && (
               <div className="mt-3 grid gap-4 sm:grid-cols-2">
-                <Field label="Actual total units" htmlFor="qtyReceivedInput" required error={err("qtyReceived")}>
+                <Field label={`Actual total ${unit}`} htmlFor="qtyReceivedInput" required error={err("qtyReceived")}>
                   <input id="qtyReceivedInput" inputMode="numeric" className={inputClass} value={d.qtyReceived} onChange={(e) => set("qtyReceived", e.target.value)} />
                 </Field>
                 <Field label="Reason" htmlFor="qtyOverrideReason" required error={err("qtyOverrideReason")} hint="Saved in the audit trail.">
@@ -606,7 +638,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
             </Field>
           )}
 
-          <Field label="Unit cost (per unit)" htmlFor="unitCost" error={err("unitCost")} hint="Needed before release — skip it if you don’t have it yet.">
+          <Field label={`Unit cost (per ${unitSingular(unit)})`} htmlFor="unitCost" error={err("unitCost")} hint="Needed before release — skip it if you don’t have it yet.">
             <div className="flex max-w-xs items-center gap-2">
               <span className="text-slate-500">$</span>
               <input id="unitCost" name="unitCost" inputMode="decimal" className={inputClass} value={d.unitCost} onChange={(e) => set("unitCost", e.target.value)} placeholder="0.0125" />
@@ -680,8 +712,10 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                   </>
                 ) : (
                   <>
-                    New {category.codePrefix}-### —{" "}
-                    {d.itemName || category.specFields.map((f) => d.specs[f.key]).filter(Boolean).join(" ")}
+                    New {newPrefix ?? category.codePrefix}-### —{" "}
+                    {d.itemName || category.specFields.map((f) => d.specs[f.key]).filter(Boolean).join(" ")} · owner{" "}
+                    {d.extras.ownerKind === "client" ? d.extras.ownerClient : "SVLSG"}
+                    {d.extras.dedicatedProduct && ` · for ${d.extras.dedicatedProduct}`}
                   </>
                 )}
               </Summary>
@@ -707,10 +741,10 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
                 {(d.mfgDate || d.expDate) && ` · mfg ${d.mfgDate || "—"} / exp ${d.expDate || "—"}`}
               </Summary>
               <Summary label="Quantity" onEdit={() => goTo(steps.findIndex((s) => s.key === "batch"))}>
-                {cases?.toLocaleString()} cases × {unitsPerCase?.toLocaleString()} = <strong>{qtyReceived?.toLocaleString()} units</strong>
+                {plural(cases ?? 0, "case")} × {formatQty(unitsPerCase ?? 0, unit)} = <strong>{formatQty(qtyReceived ?? 0, unit)}</strong>
                 {d.overrideQty && ` (counted; reason: ${d.qtyOverrideReason})`}
                 {!receipt && ` · matches packing list: ${d.qtyMatches === "yes" ? "yes" : `no — ${d.qtyMatchNote}`}`}
-                {d.unitCost && ` · $${d.unitCost}/unit`}
+                {d.unitCost && ` · $${d.unitCost} per ${unitSingular(unit)}`}
               </Summary>
               <Summary label="Storage" onEdit={() => goTo(steps.findIndex((s) => s.key === "storage"))}>
                 {location?.name}
@@ -745,7 +779,7 @@ export function ReceiveWizard({ data }: { data: WizardData }) {
             {blocking.length === 0 && (
               <p className="text-sm text-slate-600">
                 Saving creates the receiving record{receipt ? "" : " and REC number"}, the lot in <Badge tone="amber">Quarantine</Badge> and the
-                receive transaction of {qtyReceived?.toLocaleString()} units.
+                receive transaction of {formatQty(qtyReceived ?? 0, unit)}.
               </p>
             )}
             <FormMessage state={state} />

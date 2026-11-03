@@ -1,240 +1,60 @@
-// Seed data for the SVLSG inventory prototype.
-// Safe to re-run: every insert is an upsert keyed on a natural key.
+// Baseline seed for the SVLSG inventory prototype: users, locations, the ten categories,
+// one real supplier and item, and the ANSI tables. Safe to re-run: every insert is an
+// upsert keyed on a natural key, and nothing is deleted.
 //
 //   npm run db:seed        (or: npx prisma db seed)
+//
+// For a full demo data set (items and lots in every category) use `npm run seed:demo`,
+// which CLEARS the database first — see scripts/seed-demo.ts.
 
 import { PrismaClient } from "@prisma/client";
-import type { CategoryConfig } from "../src/lib/category-config";
 import { refreshLotWorkflow } from "../src/lib/workflow";
+import { auditUpdate } from "../src/lib/audit";
+import { DEMO_USERS, upsertAnsiTables, upsertCategories, upsertLocations } from "./catalog";
 
 const prisma = new PrismaClient();
 
-// ---------------------------------------------------------------------------
-// Users (demo only — replaced by Google Workspace login later)
-// ---------------------------------------------------------------------------
-// role: "user" or "admin" (admin manages users). qcAuthorized is set only when a user is
-// first created — after that it is managed on the Users page and audited.
-const USERS = [
-  { name: "Warehouse Demo", initials: "WH", role: "user", qcAuthorized: false },
-  { name: "QC Demo", initials: "QC", role: "user", qcAuthorized: true },
-  { name: "Admin Demo", initials: "AD", role: "admin", qcAuthorized: false },
-];
+const RETIRED_DEMO_USERS = ["WH", "AD"]; // Warehouse Demo, Admin Demo ("QC Demo" is renamed to "QC")
 
-// ---------------------------------------------------------------------------
-// Locations and rooms
-// TODO(confirm): which building each room is in.
-// ---------------------------------------------------------------------------
-const LOCATIONS: { name: string; rooms: string[] }[] = [
-  { name: "1283 Alviso", rooms: [] },
-  { name: "1241 Alderwood", rooms: ["#6 Packaging", "#12"] },
-];
+const SUPPLIERS = [{ name: "HongKong Tao Nutrition Health Science Company", type: "svlsg", aslApproved: true }];
 
-// ---------------------------------------------------------------------------
-// Categories and their completeness config (spec §3, §4.1)
-// ---------------------------------------------------------------------------
-const LIDS_CONFIG: CategoryConfig = {
-  specFields: [
-    { key: "size", label: "Size", required: true },
-    { key: "color", label: "Color", required: true },
-    { key: "material", label: "Material / type", required: true },
-  ],
-  // `ref` = the form / SOP / regulation shown next to each checklist line.
-  // TODO(confirm with QA): refs for the plain receiving-log fields.
-  requirements: {
-    at_receiving: [
-      { key: "supplier", label: "Supplier", source: "field", path: "receipt.supplierId", task: "Choose the supplier", ref: "Receiving log" },
-      { key: "dateReceived", label: "Date received", source: "field", path: "receipt.dateReceived", notInFuture: true, task: "Correct the date received", ref: "Receiving log" },
-      { key: "carrierInspection", label: "Truck inspection done", source: "field", path: "receipt.carrierInspectionDone", expect: "yes", task: "Confirm the truck inspection (F.WD.001) was done", ref: "F.WD.001" },
-      { key: "batchOrLotNo", label: "Supplier batch no. or lot no.", source: "field", anyOf: ["lot.supplierBatchNo", "lot.lotNo"], task: "Enter supplier batch or lot no.", ref: "Receiving log" },
-      { key: "cases", label: "Number of cases", source: "field", path: "lot.cases", task: "Enter number of cases", ref: "Receiving log" },
-      { key: "unitsPerCase", label: "Units per case", source: "field", path: "lot.unitsPerCase", task: "Enter units per case", ref: "Receiving log" },
-      // "No" is a legitimate answer (a shortage), but it needs QC follow-up before release.
-      {
-        key: "qtyMatch",
-        label: "Total matches packing list / PO",
-        source: "field",
-        path: "receipt.qtyMatchesPackingList",
-        expect: "yes",
-        followUp: { note: "receipt.qtyMatchNote", resolvedBy: "receipt.qtyDiffResolution", owner: "qc" },
-        task: "Confirm received quantity matches packing list / PO",
-        followUpTask: "Resolve quantity difference with packing list / PO",
-        ref: "Receiving log",
-      },
-      { key: "segregation", label: "Special segregation", source: "field", path: "receipt.segregation", task: "Choose special segregation", ref: "Receiving log" },
-      { key: "location", label: "Location", source: "field", path: "lot.locationId", task: "Choose storage location", ref: "Receiving log" },
-      { key: "boxLabelPhoto", label: "Photo of box label", source: "document", documentType: "Photo", attachedTo: "lot", task: "Upload box label photo", ref: "Receiving log" },
-      { key: "quarantineSticker", label: "Quarantine sticker on every box", source: "field", path: "receipt.quarantineStickerApplied", expect: "yes", task: "Confirm quarantine labels are applied to every box", ref: "21 CFR 111" },
-    ],
-    before_release: [
-      { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item", task: "Upload item spec sheet", ref: "21 CFR 111" },
-      { key: "poInvoiceNo", label: "PO / invoice no.", source: "field", path: "receipt.poInvoiceNo", task: "Enter PO / invoice no.", ref: "Receiving log" },
-      { key: "unitCost", label: "Unit cost", source: "field", path: "lot.unitCost", task: "Enter unit cost", ref: "Inventory card" },
-      { key: "packingListOrCoa", label: "Packing list / COA", source: "document", attachedTo: "lot", anyOf: ["Packing list", "COA"], task: "Upload packing list / COA", ref: "21 CFR 111" },
-      { key: "inspection", label: "Incoming inspection", source: "inspection", task: "Inspect lot (F.WD.003)", ref: "F.WD.003", owner: "qc" },
-    ],
-  },
-  // F.WD.003 checklist (spec §4.3)
-  inspectionChecklist: [
-    { key: "sameMaterial", label: "Same material as standard?", group: "Form" },
-    { key: "colorMatches", label: "Color matches standard?", group: "Form" },
-    { key: "artworkMatches", label: "Artwork matches standard?", group: "Form" },
-    { key: "artworkLegible", label: "Artwork complete and legible?", group: "Form" },
-    { key: "packagingMatches", label: "Packaging matches QC standard?", group: "Form" },
-    { key: "sameSize", label: "Same size as standard?", group: "Fit" },
-    { key: "closureFits", label: "Closure and container fit?", group: "Fit" },
-    { key: "closureApplies", label: "Closure can be applied and removed?", group: "Function" },
-    { key: "mechanismWorks", label: "Container mechanism works?", group: "Function" },
-    { key: "labelAdhesive", label: "Label adhesive sufficient / releases cleanly?", group: "Function" },
-    { key: "tapeTest", label: "Tape test passed?", group: "Function" },
-    { key: "rubOffTest", label: "Rub-off test passed?", group: "Function" },
-  ],
-  itemRequirements: [
-    { key: "size", label: "Size", source: "field", path: "item.specs.size", ref: "Item master" },
-    { key: "color", label: "Color", source: "field", path: "item.specs.color", ref: "Item master" },
-    { key: "material", label: "Material / type", source: "field", path: "item.specs.material", ref: "Item master" },
-    { key: "specSheet", label: "Spec sheet", source: "document", documentType: "Spec sheet", attachedTo: "item", ref: "21 CFR 111" },
-  ],
-};
-
-const EMPTY_CONFIG: CategoryConfig = {
-  specFields: [],
-  requirements: { at_receiving: [], before_release: [] },
-  itemRequirements: [],
-  inspectionChecklist: [],
-};
-
-// TODO: fill in spec fields / requirements / test path for the other categories.
-const CATEGORIES = [
-  { name: "Raw Ingredients", codePrefix: "R", testPath: null, config: EMPTY_CONFIG },
-  { name: "Components-Capsules", codePrefix: "C-CAP", testPath: null, config: EMPTY_CONFIG },
-  { name: "Components-Bottles", codePrefix: "C-BOT", testPath: null, config: EMPTY_CONFIG },
-  { name: "Components-Lids", codePrefix: "C-LID", testPath: "ansi_sampling", config: LIDS_CONFIG },
-  { name: "Components-Labels", codePrefix: "C-LABEL", testPath: null, config: EMPTY_CONFIG },
-  { name: "Internal-Components-SilicaPackets", codePrefix: "INT-C-SP", testPath: null, config: EMPTY_CONFIG },
-];
-
-// ---------------------------------------------------------------------------
-// Sample suppliers
-// TODO(confirm): real ASL status and contacts. The second and third rows are
-// fictional, only there to demo the "not ASL approved" warning and
-// customer-supplied material.
-// ---------------------------------------------------------------------------
-const SUPPLIERS = [
-  { name: "HongKong Tao Nutrition Health Science Company", type: "svlsg", aslApproved: true },
-  { name: "Sample Packaging Co. (not ASL approved)", type: "svlsg", aslApproved: false, notes: "Demo row" },
-  { name: "Sample Customer (customer-supplied)", type: "customer_supplied", aslApproved: true, notes: "Demo row" },
-];
-
-// Existing item from the current spreadsheet, used for the spec's test receipt.
-// Its old-sheet number (010) is kept, so the next new lid becomes C-LID-011.
+// Existing item from the current spreadsheet. Its old-sheet number (010) is kept;
+// new lids skip numbers already taken (src/lib/numbering.ts).
 // TODO(confirm, spec §7 Q1): whether the size suffix belongs in the code.
 const ITEMS = [
   {
     code: "C-LID-010",
     legacyCode: "C-Lids-010-38mm",
-    name: "Lid 38mm",
+    name: "Lid 38mm White PP",
     categoryPrefix: "C-LID",
-    specs: { size: "38mm" }, // color / material to be filled in from the spec sheet
+    specs: { size: "38mm", material: "PP", color: "White" },
+    owner: "SVLSG",
+    supplierName: "HongKong Tao Nutrition Health Science Company",
   },
 ];
-const COUNTERS = [{ key: "ITEM:C-LID", value: 10 }];
-
-// ---------------------------------------------------------------------------
-// ANSI/ASQ Z1.4 tables
-// QA MUST VERIFY THESE AGAINST THE PRINTED STANDARD BEFORE USE (spec §4.2).
-// ---------------------------------------------------------------------------
-
-// Table 1 — General Inspection Level II
-const TABLE_1_LEVEL_II: [number, number | null, string][] = [
-  [2, 8, "A"],
-  [9, 15, "B"],
-  [16, 25, "C"],
-  [26, 50, "D"],
-  [51, 90, "E"],
-  [91, 150, "F"],
-  [151, 280, "G"],
-  [281, 500, "H"],
-  [501, 1200, "J"],
-  [1201, 3200, "K"],
-  [3201, 10000, "L"],
-  [10001, 35000, "M"],
-  [35001, 150000, "N"],
-  [150001, 500000, "P"],
-  [500001, null, "Q"],
-];
-
-const SAMPLE_SIZES: [string, number][] = [
-  ["A", 2], ["B", 3], ["C", 5], ["D", 8], ["E", 13], ["F", 20], ["G", 32], ["H", 50],
-  ["J", 80], ["K", 125], ["L", 200], ["M", 315], ["N", 500], ["P", 800], ["Q", 1250], ["R", 2000],
-];
-
-// Table 2-A — Single sampling plans, normal inspection. "Ac/Re", ↓ = use first
-// plan below, ↑ = use first plan above. Only AQLs 0.065–6.5 are seeded.
-const TABLE_2A_AQLS = ["0.065", "0.10", "0.15", "0.25", "0.40", "0.65", "1.0", "1.5", "2.5", "4.0", "6.5"];
-const TABLE_2A = `
-     0.065  0.10  0.15  0.25  0.40  0.65   1.0   1.5   2.5   4.0   6.5
-A      ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓   0/1
-B      ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓   0/1     ↑
-C      ↓     ↓     ↓     ↓     ↓     ↓     ↓     ↓   0/1     ↑     ↓
-D      ↓     ↓     ↓     ↓     ↓     ↓     ↓   0/1     ↑     ↓   1/2
-E      ↓     ↓     ↓     ↓     ↓     ↓   0/1     ↑     ↓   1/2   2/3
-F      ↓     ↓     ↓     ↓     ↓   0/1     ↑     ↓   1/2   2/3   3/4
-G      ↓     ↓     ↓     ↓   0/1     ↑     ↓   1/2   2/3   3/4   5/6
-H      ↓     ↓     ↓   0/1     ↑     ↓   1/2   2/3   3/4   5/6   7/8
-J      ↓     ↓   0/1     ↑     ↓   1/2   2/3   3/4   5/6   7/8 10/11
-K      ↓   0/1     ↑     ↓   1/2   2/3   3/4   5/6   7/8 10/11 14/15
-L    0/1     ↑     ↓   1/2   2/3   3/4   5/6   7/8 10/11 14/15 21/22
-M      ↑     ↓   1/2   2/3   3/4   5/6   7/8 10/11 14/15 21/22     ↑
-N      ↓   1/2   2/3   3/4   5/6   7/8 10/11 14/15 21/22     ↑     ↑
-P    1/2   2/3   3/4   5/6   7/8 10/11 14/15 21/22     ↑     ↑     ↑
-Q    2/3   3/4   5/6   7/8 10/11 14/15 21/22     ↑     ↑     ↑     ↑
-R    3/4   5/6   7/8 10/11 14/15 21/22     ↑     ↑     ↑     ↑     ↑
-`;
-
-function parseTable2A() {
-  const rows = TABLE_2A.trim().split("\n").slice(1);
-  return rows.flatMap((line) => {
-    const [codeLetter, ...cells] = line.trim().split(/\s+/);
-    if (cells.length !== TABLE_2A_AQLS.length) throw new Error(`Table 2-A row ${codeLetter} has ${cells.length} cells`);
-    return cells.map((cell, i) => {
-      const aql = TABLE_2A_AQLS[i];
-      if (cell === "↑") return { codeLetter, aql, ac: null, re: null, arrow: "up" };
-      if (cell === "↓") return { codeLetter, aql, ac: null, re: null, arrow: "down" };
-      const [ac, re] = cell.split("/").map(Number);
-      return { codeLetter, aql, ac, re, arrow: null };
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
 
 async function main() {
-  for (const u of USERS) {
+  // qcAuthorized is set only when a user is first created — after that it is managed on
+  // the Users page and audited.
+  for (const u of DEMO_USERS) {
     await prisma.user.upsert({ where: { initials: u.initials }, create: u, update: { name: u.name } });
   }
-
-  for (const loc of LOCATIONS) {
-    const location = await prisma.location.upsert({ where: { name: loc.name }, create: { name: loc.name }, update: {} });
-    for (const room of loc.rooms) {
-      await prisma.room.upsert({
-        where: { locationId_name: { locationId: location.id, name: room } },
-        create: { name: room, locationId: location.id },
-        update: {},
-      });
-    }
+  // The previous demo users are retired. They may own history, so they are deactivated
+  // (hidden from the user picker), not deleted. `npm run seed:demo` starts without them.
+  for (const old of await prisma.user.findMany({ where: { initials: { in: RETIRED_DEMO_USERS }, active: true } })) {
+    await prisma.$transaction(async (tx) => {
+      await auditUpdate(tx, { userId: null, table: "User", recordId: old.id, before: old, after: { active: false }, reason: "Old demo user retired" });
+      await tx.user.update({ where: { id: old.id }, data: { active: false } });
+    });
   }
-
-  for (const c of CATEGORIES) {
-    const data = { name: c.name, testPath: c.testPath, config: JSON.stringify(c.config) };
-    await prisma.category.upsert({ where: { codePrefix: c.codePrefix }, create: { ...data, codePrefix: c.codePrefix }, update: data });
-  }
-
+  await upsertLocations(prisma);
+  await upsertCategories(prisma);
   for (const s of SUPPLIERS) {
     await prisma.supplier.upsert({ where: { name: s.name }, create: s, update: {} });
   }
-
   for (const it of ITEMS) {
     const category = await prisma.category.findUniqueOrThrow({ where: { codePrefix: it.categoryPrefix } });
+    const supplier = await prisma.supplier.findUnique({ where: { name: it.supplierName } });
     await prisma.item.upsert({
       where: { code: it.code },
       create: {
@@ -243,41 +63,13 @@ async function main() {
         name: it.name,
         categoryId: category.id,
         specs: JSON.stringify(it.specs),
+        owner: it.owner,
+        supplierId: supplier?.id,
       },
       update: {},
     });
   }
-
-  // Never move a counter backwards on re-seed.
-  for (const c of COUNTERS) {
-    const existing = await prisma.counter.findUnique({ where: { key: c.key } });
-    if (!existing) await prisma.counter.create({ data: c });
-    else if (existing.value < c.value) await prisma.counter.update({ where: { key: c.key }, data: { value: c.value } });
-  }
-
-  for (const [minLotSize, maxLotSize, codeLetter] of TABLE_1_LEVEL_II) {
-    await prisma.ansiCodeLetter.upsert({
-      where: { inspectionLevel_minLotSize: { inspectionLevel: "II", minLotSize } },
-      create: { inspectionLevel: "II", minLotSize, maxLotSize, codeLetter },
-      update: { maxLotSize, codeLetter },
-    });
-  }
-
-  for (const [i, [codeLetter, sampleSize]] of SAMPLE_SIZES.entries()) {
-    await prisma.ansiSampleSize.upsert({
-      where: { codeLetter },
-      create: { codeLetter, sampleSize, sortOrder: i + 1 },
-      update: { sampleSize, sortOrder: i + 1 },
-    });
-  }
-
-  for (const p of parseTable2A()) {
-    await prisma.ansiPlan.upsert({
-      where: { codeLetter_aql: { codeLetter: p.codeLetter, aql: p.aql } },
-      create: p,
-      update: { ac: p.ac, re: p.re, arrow: p.arrow },
-    });
-  }
+  await upsertAnsiTables(prisma);
 
   // requirements may have changed: recompute every lot's workflow cache
   const refreshed = await refreshLotWorkflow(prisma, {});
@@ -289,8 +81,6 @@ async function main() {
     categories: await prisma.category.count(),
     suppliers: await prisma.supplier.count(),
     items: await prisma.item.count(),
-    ansiCodeLetters: await prisma.ansiCodeLetter.count(),
-    ansiSampleSizes: await prisma.ansiSampleSize.count(),
     ansiPlans: await prisma.ansiPlan.count(),
     lotsWorkflowRefreshed: refreshed,
   };

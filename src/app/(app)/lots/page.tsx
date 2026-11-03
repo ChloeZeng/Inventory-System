@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { categoryLabel, formatQty } from "@/lib/category-config";
+import { plural } from "@/lib/text";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
 import { QC_STATUSES } from "@/lib/constants";
@@ -24,7 +26,7 @@ export default async function LotsPage({
   const sort = sp.sort === "newest" ? "newest" : "oldest";
   const filters = { q: sp.q?.trim() || undefined, categoryId: Number(sp.category) || undefined };
 
-  const categories = await prisma.category.findMany({ orderBy: { name: "asc" } });
+  const categories = await prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
   const firstTry = Math.max(1, Number(sp.page) || 1);
   let { total, rows } = await lotPage({ user: user ?? { qcAuthorized: false }, filters, view, status, sort, page: firstTry, pageSize: PAGE_SIZE });
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -71,7 +73,7 @@ export default async function LotsPage({
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name}
+              {categoryLabel(c)}
             </option>
           ))}
         </select>
@@ -94,7 +96,7 @@ export default async function LotsPage({
       </form>
 
       <p className="mb-2 text-sm text-slate-600" aria-live="polite">
-        {total ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${total.toLocaleString()} lots` : "No lots match."}
+        {total ? `Showing ${from.toLocaleString()}–${to.toLocaleString()} of ${plural(total, "lot")}` : "No lots match."}
       </p>
 
       <Table
@@ -127,13 +129,13 @@ export default async function LotsPage({
             <td className="px-4 py-2">
               {lot.item.name}
               <div className="font-mono text-xs text-slate-500">
-                {lot.item.code} · {lot.item.category.name}
+                {lot.item.code} · {categoryLabel(lot.item.category)}
               </div>
             </td>
             <td className="whitespace-nowrap px-4 py-2">{formatDate(lot.receipt.dateReceived)}</td>
             <td className="px-4 py-2 tabular-nums">
               {wf.balance.toLocaleString()}
-              <div className="text-xs text-slate-500">of {lot.qtyReceived.toLocaleString()}</div>
+              <div className="text-xs text-slate-500">of {formatQty(lot.qtyReceived, lot.item.category.unit)}</div>
             </td>
             <td className="px-4 py-2">
               <QcStatusBadge status={lot.qcStatus} />

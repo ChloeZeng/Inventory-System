@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
+import { categoryLabel, parseCategoryConfig, parseSpecs, formatSpecs, subTypeLabel } from "@/lib/category-config";
 import { itemChecklist } from "@/lib/records";
 import { CompletionBar } from "@/components/progress";
 import { Badge, PageHeader, Table, buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
@@ -11,13 +11,22 @@ export default async function ItemsPage({
   searchParams: Promise<{ q?: string; category?: string; inactive?: string }>;
 }) {
   const { q = "", category = "", inactive } = await searchParams;
-  const categories = await prisma.category.findMany({ orderBy: { name: "asc" } });
+  const categories = await prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
   const items = await prisma.item.findMany({
     where: {
       ...(category ? { categoryId: Number(category) } : {}),
       ...(inactive ? {} : { active: true }),
       ...(q
-        ? { OR: [{ code: { contains: q } }, { name: { contains: q } }, { legacyCode: { contains: q } }, { specs: { contains: q } }] }
+        ? {
+            OR: [
+              { code: { contains: q } },
+              { name: { contains: q } },
+              { legacyCode: { contains: q } },
+              { specs: { contains: q } },
+              { owner: { contains: q } },
+              { dedicatedProduct: { contains: q } },
+            ],
+          }
         : {}),
     },
     include: {
@@ -25,7 +34,7 @@ export default async function ItemsPage({
       documents: { select: { type: true } },
       _count: { select: { lots: true } },
     },
-    orderBy: { code: "asc" },
+    orderBy: [{ category: { sortOrder: "asc" } }, { code: "asc" }],
   });
 
   return (
@@ -41,12 +50,12 @@ export default async function ItemsPage({
       />
 
       <form className="mb-4 flex flex-wrap items-center gap-2">
-        <input name="q" defaultValue={q} placeholder="Search code, name, size, color…" className={`${inputClass} max-w-xs`} />
+        <input name="q" defaultValue={q} placeholder="Search code, name, size, owner, product…" className={`${inputClass} max-w-xs`} />
         <select name="category" defaultValue={category} className={`${inputClass} w-auto`}>
           <option value="">All categories</option>
           {categories.map((c) => (
             <option key={c.id} value={c.id}>
-              {c.name} ({c.codePrefix})
+              {categoryLabel(c)}
             </option>
           ))}
         </select>
@@ -57,7 +66,7 @@ export default async function ItemsPage({
       </form>
 
       <Table
-        head={["Code", "Name", "Category", "Specs", "Spec sheet", "Complete", "Lots"]}
+        head={["Code", "Name", "Category", "Description", "Owner", "Spec sheet", "Complete", "Lots"]}
         empty={items.length === 0 && <p className="px-4 py-6 text-center text-sm text-slate-500">No items match.</p>}
       >
         {items.map((i) => (
@@ -71,8 +80,15 @@ export default async function ItemsPage({
             <td className="px-4 py-2">
               {i.name} {!i.active && <Badge>inactive</Badge>}
             </td>
-            <td className="px-4 py-2 text-slate-600">{i.category.name}</td>
+            <td className="px-4 py-2 text-slate-600">
+              {categoryLabel(i.category)}
+              {i.subType && <div className="text-xs text-slate-500">{subTypeLabel(parseCategoryConfig(i.category.config), i.subType)}</div>}
+            </td>
             <td className="px-4 py-2 text-slate-600">{formatSpecs(parseCategoryConfig(i.category.config), parseSpecs(i.specs)) || "—"}</td>
+            <td className="px-4 py-2 text-slate-600">
+              {i.owner}
+              {i.dedicatedProduct && <div className="text-xs text-slate-500">for {i.dedicatedProduct}</div>}
+            </td>
             <td className="px-4 py-2">
               {i.documents.some((d) => d.type === "Spec sheet") ? <Badge tone="green">on file</Badge> : <Badge tone="amber">missing</Badge>}
             </td>

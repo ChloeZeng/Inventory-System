@@ -2,8 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/current-user";
-import { parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
-import { LOT_DOCUMENT_TYPES, USAGE_TYPES, segregationLabel, supplierTypeLabel, transactionTypeLabel } from "@/lib/constants";
+import { categoryLabel, formatQty, parseCategoryConfig, parseSpecs, formatSpecs } from "@/lib/category-config";
+import { plural } from "@/lib/text";
+import { LOT_DOCUMENT_TYPES, USAGE_TYPES, segregationLabel, supplierTypeLabel, testPathLabel, transactionTypeLabel, usesAnsiSampling } from "@/lib/constants";
 import { releaseReadiness } from "@/lib/completeness";
 import { toDateInput, todayDateInput } from "@/lib/forms";
 import { parseChecklist } from "@/lib/inspection";
@@ -72,6 +73,7 @@ export default async function LotDetailPage({
 
   const { summary, balance, progress, lastInspection } = lotStatus(lot);
   const config = parseCategoryConfig(lot.item.category.config);
+  const unit = lot.item.category.unit;
   const label = lotLabel(lot);
   const unitCost = lot.unitCost ? Number(lot.unitCost) : null;
   const release = releaseReadiness(summary);
@@ -80,7 +82,7 @@ export default async function LotDetailPage({
   let plan: ReturnType<typeof samplingPlan> | null = null;
   let planError: string | null = null;
   try {
-    if (lot.item.category.testPath === "ansi_sampling") plan = samplingPlan(tables, lot.qtyReceived);
+    if (usesAnsiSampling(lot.item.category.testPath)) plan = samplingPlan(tables, lot.qtyReceived);
   } catch (e) {
     planError = e instanceof Error ? e.message : String(e);
   }
@@ -180,7 +182,7 @@ export default async function LotDetailPage({
               </div>
             </dl>
             <p className={`text-sm font-medium ${release.ready ? "text-emerald-700" : "text-red-700"}`}>
-              {release.ready ? "✓ All release requirements met" : `✕ ${release.met} of ${release.total} requirements met — ${release.open.length} open`}
+              {release.ready ? "✓ All release requirements met" : `✕ ${release.met} of ${plural(release.total, "requirement")} met — ${release.open.length} open`}
             </p>
             <QcGate authorized={isQc} label="Release lot">
               <ReleaseForm action={releaseLot.bind(null, lot.id)} lotLabel={label} ready={release.ready} />
@@ -199,6 +201,14 @@ export default async function LotDetailPage({
       };
     }
     if (wf.stage === "released") {
+      // products used before, as suggestions in the usage form
+      const used = await prisma.inventoryTransaction.findMany({
+        where: { type: "production_use", productOrCustomer: { not: null } },
+        distinct: ["productOrCustomer"],
+        select: { productOrCustomer: true },
+        orderBy: { productOrCustomer: "asc" },
+        take: 100,
+      });
       modals["do:usage"] = {
         title: `Record usage — lot ${label}`,
         doneMessage: "Usage recorded.",
@@ -206,7 +216,10 @@ export default async function LotDetailPage({
           <UsageForm
             action={recordUsage.bind(null, lot.id)}
             balance={balance}
+            unit={unit}
             unitCost={unitCost}
+            dedicatedProduct={lot.item.dedicatedProduct}
+            products={used.map((u) => u.productOrCustomer!)}
             types={USAGE_TYPES.map((t) => ({ value: t, label: transactionTypeLabel(t) }))}
             rooms={rooms.map((r) => ({ id: r.id, name: r.name }))}
             today={todayDateInput()}
@@ -229,15 +242,17 @@ export default async function LotDetailPage({
       <div className="space-y-6">
         <Card title="Lot information">
           <dl className="space-y-2 text-sm">
-            <Row label="Category">{lot.item.category.name}</Row>
-            <Row label="Specs">{formatSpecs(config, parseSpecs(lot.item.specs)) || "—"}</Row>
+            <Row label="Category">{categoryLabel(lot.item.category)}</Row>
+            <Row label="Description">{formatSpecs(config, parseSpecs(lot.item.specs)) || "—"}</Row>
+            <Row label="Owner">{lot.item.owner}</Row>
+            {lot.item.dedicatedProduct && <Row label="Dedicated product">{lot.item.dedicatedProduct}</Row>}
             <Row label="Supplier batch no.">{lot.supplierBatchNo ?? "—"}</Row>
             <Row label="Lot no.">{lot.lotNo ?? "—"}</Row>
             <Row label="Mfg / exp">
               {formatDate(lot.mfgDate)} / {formatDate(lot.expDate)}
             </Row>
             <Row label="Quantity">
-              {lot.cases.toLocaleString()} cases × {lot.unitsPerCase.toLocaleString()} = {lot.qtyReceived.toLocaleString()}
+              {plural(lot.cases, "case")} × {formatQty(lot.unitsPerCase, unit)} = {formatQty(lot.qtyReceived, unit)}
               {lot.qtyOverrideReason && <div className="text-xs text-slate-500">Counted: {lot.qtyOverrideReason}</div>}
             </Row>
             <Row label="Location">{lot.location.name}</Row>
@@ -288,8 +303,8 @@ export default async function LotDetailPage({
         </Card>
         <Card title="Balance and cost">
           <dl className="space-y-2 text-sm">
-            <Row label="Received">{lot.qtyReceived.toLocaleString()} units</Row>
-            <Row label="Balance on hand">{balance.toLocaleString()} units</Row>
+            <Row label="Received">{formatQty(lot.qtyReceived, unit)}</Row>
+            <Row label="Balance on hand">{formatQty(balance, unit)}</Row>
             <Row label="Unit cost">{unitCost !== null ? formatMoney(unitCost) : <span className="text-amber-700">not entered</span>}</Row>
             <Row label="Lot value received">{unitCost !== null ? formatMoney(unitCost * lot.qtyReceived, 2) : "—"}</Row>
             <Row label="Value on hand">{unitCost !== null ? formatMoney(unitCost * balance, 2) : "—"}</Row>
@@ -367,7 +382,7 @@ export default async function LotDetailPage({
         {plan && (
           <>
             <p className="mb-3 text-sm text-slate-600">
-              Lot size {plan.lotSize.toLocaleString()} units · General Level {plan.inspectionLevel} · code letter <strong>{plan.codeLetter}</strong> ·
+              Lot size {formatQty(plan.lotSize, unit)} · General Level {plan.inspectionLevel} · code letter <strong>{plan.codeLetter}</strong> ·
               draw <strong>{plan.sampleSize.toLocaleString()}</strong>
               {plan.hundredPercent ? " (100% inspection)" : " samples"}
             </p>
@@ -396,7 +411,7 @@ export default async function LotDetailPage({
           </>
         )}
         {planError && <p className="text-sm text-red-700">Sampling plan unavailable: {planError}</p>}
-        {!plan && !planError && <p className="text-sm text-slate-500">No sampling plan configured for {lot.item.category.name}.</p>}
+        {!plan && !planError && <p className="text-sm text-slate-500">No sampling plan configured for {categoryLabel(lot.item.category)}.</p>}
       </Card>
 
       <Card title="Inspection (F.WD.003)">
@@ -405,7 +420,10 @@ export default async function LotDetailPage({
         ) : lot.qcStatus !== "Quarantine" ? (
           <p className="text-sm text-slate-600">No confirmed inspection is recorded for this lot.</p>
         ) : !wf.inspectionRequired ? (
-          <p className="text-sm text-slate-600">No incoming inspection is configured for {lot.item.category.name}.</p>
+          <p className="text-sm text-slate-600">
+            No incoming inspection is configured for {categoryLabel(lot.item.category)}
+            {testPathLabel(lot.item.category.testPath) && <> — its testing path is {testPathLabel(lot.item.category.testPath)!.toLowerCase()}</>}.
+          </p>
         ) : user ? (
           <InspectionForm
             action={saveInspection.bind(null, lot.id)}
@@ -528,7 +546,7 @@ export default async function LotDetailPage({
             <div>
               <dt className="text-xs text-slate-500">Balance</dt>
               <dd className="font-semibold tabular-nums">
-                {balance.toLocaleString()} <span className="font-normal text-slate-500">/ {lot.qtyReceived.toLocaleString()}</span>
+                {balance.toLocaleString()} <span className="font-normal text-slate-500">/ {formatQty(lot.qtyReceived, unit)}</span>
               </dd>
             </div>
             <div>
