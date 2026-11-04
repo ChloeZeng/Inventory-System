@@ -175,7 +175,7 @@ export function DetailHeader({
   aside?: React.ReactNode;
 }) {
   return (
-    <div className="sticky top-14 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur md:top-0 md:-mx-8 md:px-8">
+    <div className="sticky top-14 z-20 -mx-4 border-b border-slate-200 bg-slate-50/95 px-4 py-3 backdrop-blur md:top-14 md:-mx-8 md:px-8">
       {back && <div className="mb-0.5 text-sm">{back}</div>}
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">

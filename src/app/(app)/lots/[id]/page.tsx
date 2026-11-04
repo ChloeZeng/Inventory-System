@@ -16,6 +16,8 @@ import { lotNextAction, lotRequirementGroups, type LotFieldValues } from "@/lib/
 import { InspectionForm } from "../inspection-form";
 import { InspectionResult } from "../inspection-result";
 import { UsageForm } from "../usage-form";
+import { StockChangeForm } from "../stock-change-form";
+import { OpenActionLink } from "@/components/detail/open-action";
 import { Card, Table, formatDate, formatDateTime, formatMoney, secondaryButtonClass } from "@/components/ui";
 import { Stepper } from "@/components/progress";
 import { UploadForm } from "@/components/upload-form";
@@ -31,7 +33,7 @@ import { uploadItemDocument } from "../../items/actions";
 import { LotDetailsForm } from "../lot-details-form";
 import { ResolveForm } from "../resolve-form";
 import { RejectForm, ReleaseForm } from "../qc-decision-forms";
-import { recordUsage, rejectLot, releaseLot, resolveQtyDifference, saveInspection, updateLotDetails, uploadLotDocument } from "../actions";
+import { recordStockChange, recordUsage, rejectLot, releaseLot, resolveQtyDifference, saveInspection, updateLotDetails, uploadLotDocument } from "../actions";
 
 // Lot detail, readable in 10 seconds:
 //   top (always visible)  identity · step bar · what's next · open requirements
@@ -231,6 +233,17 @@ export default async function LotDetailPage({
         ),
       };
     }
+    // loss, scrap, count — in any status (e.g. scrapping a rejected lot); ?do=count opens the count
+    for (const [name, type, title] of [
+      ["stock", "loss", "Record loss, scrap or count"],
+      ["count", "count_adjustment", "Record stock count"],
+    ] as const) {
+      modals[`do:${name}`] = {
+        title: `${title} — lot ${label}`,
+        doneMessage: "Saved.",
+        body: <StockChangeForm action={recordStockChange.bind(null, lot.id)} balance={balance} unit={unit} today={todayDateInput()} initialType={type} />,
+      };
+    }
   }
 
   // ---- tabs -------------------------------------------------------------------------------
@@ -323,6 +336,12 @@ export default async function LotDetailPage({
             <Row label="Value on hand">{unitCost !== null ? formatMoney(unitCost * balance, 2) : "—"}</Row>
           </dl>
           <p className="mt-3 text-xs text-slate-500">Balance is calculated from the transactions (History tab), never typed.</p>
+          {user && (
+            <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              <OpenActionLink name="stock">Record loss or scrap</OpenActionLink>
+              <OpenActionLink name="count">Record stock count</OpenActionLink>
+            </p>
+          )}
         </Card>
       </div>
 

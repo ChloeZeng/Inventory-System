@@ -31,7 +31,8 @@ export function lotLedger(txns: Txn[]): Ledger {
 
 // A loss, scrap or count adjustment as entered: type, quantity, reason.
 // Loss / scrap: a whole number ≥ 1, stored as a negative qty.
-// Count adjustment: the signed difference found by counting, e.g. "-12" or "+5" (not 0).
+// Count adjustment: the signed difference found by counting, e.g. "-12" or "+5"; 0 records a
+// count that matched (it still counts as this month's stock count).
 export function readStockChange(input: { type: string | null; qty: string | null; reason: string | null }, balance: number) {
   const fieldErrors: Record<string, string> = {};
   const type = input.type as StockChangeType;
@@ -39,7 +40,7 @@ export function readStockChange(input: { type: string | null; qty: string | null
   const raw = (input.qty ?? "").replace(/,/g, "").trim();
   let qty: number | null = null;
   if (type === "count_adjustment") {
-    if (!/^[+-]?\d+$/.test(raw) || Number(raw) === 0) fieldErrors.qty = "Enter the difference found, e.g. -12 or +5.";
+    if (!/^[+-]?\d+$/.test(raw)) fieldErrors.qty = "Enter the difference found, e.g. -12 or +5 (0 if the count matches).";
     else qty = Number(raw);
   } else if (!/^\d+$/.test(raw) || Number(raw) < 1) fieldErrors.qty = "Enter a whole number (1 or more).";
   else qty = -Number(raw);

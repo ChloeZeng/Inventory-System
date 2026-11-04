@@ -30,10 +30,11 @@ test("loss and scrap: positive whole number stored negative; reason required", (
   assert.ok(readStockChange({ type: "production_use", qty: "1", reason: "x" }, 100).fieldErrors.type);
 });
 
-test("count adjustment: signed, not zero, balance stays ≥ 0", () => {
+test("count adjustment: signed (0 = count matches), balance stays ≥ 0", () => {
   assert.equal(readStockChange({ type: "count_adjustment", qty: "+5", reason: "Recount" }, 10).qty, 5);
   assert.equal(readStockChange({ type: "count_adjustment", qty: "-10", reason: "Recount" }, 10).qty, -10);
-  assert.ok(readStockChange({ type: "count_adjustment", qty: "0", reason: "Recount" }, 10).fieldErrors.qty);
+  assert.deepEqual(readStockChange({ type: "count_adjustment", qty: "0", reason: "Monthly count" }, 10).fieldErrors, {}); // count matches
+  assert.ok(readStockChange({ type: "count_adjustment", qty: "abc", reason: "Recount" }, 10).fieldErrors.qty);
   assert.ok(readStockChange({ type: "count_adjustment", qty: "-11", reason: "Recount" }, 10).fieldErrors.qty);
 });
 

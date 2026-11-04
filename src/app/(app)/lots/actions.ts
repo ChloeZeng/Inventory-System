@@ -430,6 +430,7 @@ export async function recordStockChange(lotId: number, _prev: ActionState, formD
     if ("fieldErrors" in result) return { error: "Please fix the highlighted fields.", fieldErrors: result.fieldErrors };
     revalidatePath("/", "layout");
     if ("duplicate" in result) return { ok: "This change was already recorded." };
+    if (result.type === "count_adjustment" && result.qty === 0) return { ok: `Count recorded — matches the record (${formatQty(result.balance!, result.unit)}).` };
     return { ok: `${transactionTypeLabel(result.type!)} recorded. ${formatQty(result.balance!, result.unit)} left.` };
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") return { ok: "This change was already recorded." };

@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { finishTour } from "@/app/actions";
 
-// 3-step guided tour on the real Home page. Each step highlights the element
+// 3-step guided tour on the real Home page (and the top-right actions). Each step highlights the element
 // marked data-tour="…" and shows a small tooltip with Next / Skip.
 const STEPS = [
-  { target: "queues", title: "Work queues", text: "Inspection, release review, and receiving & document follow-up — with how many you can act on." },
-  { target: "worklist", title: "Next tasks", text: "The oldest lots first. Each button does the next step for that lot." },
-  { target: "actions", title: "Start something new", text: "Receive a delivery, or record usage from a released lot." },
+  { target: "queues", title: "Tasks", text: "What needs doing — inspections, release review, missing documents and monthly counts. Open one for the full list." },
+  { target: "worklist", title: "Most urgent", text: "The oldest lots you can act on. Each button does the next step for that lot." },
+  { target: "actions", title: "Start something new", text: "Receive a delivery, or record usage from a released lot. These two buttons are on every page." },
 ] as const;
 
 type Box = { top: number; left: number; width: number; height: number };
@@ -24,7 +24,8 @@ export function HomeTour({ start }: { start: boolean }) {
 
   useEffect(() => {
     if (!open) return;
-    const el = document.querySelector<HTMLElement>(`[data-tour="${STEPS[step].target}"]`);
+    // the first visible match (e.g. the top actions exist in the phone bar and the desktop bar)
+    const el = [...document.querySelectorAll<HTMLElement>(`[data-tour="${STEPS[step].target}"]`)].find((e) => e.offsetParent !== null);
     if (!el) return;
     // a tall area (e.g. a long to-do list) scrolls to its top so its heading stays in view
     el.scrollIntoView({ block: el.offsetHeight > window.innerHeight * 0.7 ? "start" : "center", behavior: "smooth" });

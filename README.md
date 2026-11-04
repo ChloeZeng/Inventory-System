@@ -62,9 +62,24 @@ its default inventory columns (`inventoryColumns`; values from `src/lib/inventor
 A lot's balance is always calculated from its transactions, never typed:
 **received − used − loss − scrap ± count adjustment** (`src/lib/stock.ts`). Loss, scrap and count adjustment each
 need a reason, stored on the transaction and in the audit trail (`applyStockChange` in `src/lib/stock-change.ts`,
-server action `recordStockChange`; the form comes with the inventory pages). Item stock shows **Available** (released
-lots only) and **Quarantine** separately; rejected lots count in neither. A complete item or supplier record is
-marked "Record complete"; a lot's status is only Quarantine / Released / Rejected.
+server action `recordStockChange`; on the lot page: "Record loss or scrap", "Record stock count"). Item stock shows
+**Available** (released lots only) and **Quarantine** separately; rejected lots count in neither. A complete item or
+supplier record is marked "Record complete"; a lot's status is only Quarantine / Released / Rejected.
+
+**Monthly count:** every released lot with stock is counted once a calendar month. A count is recorded as a count
+adjustment — the difference found, or 0 when the count matches — so a lot is "Monthly count due" until it has one this
+month.
+
+### Navigation
+
+- Sidebar: **Home**, **Inventory**, **Tasks**; **Settings** at the bottom (Item master data, Suppliers, Users,
+  Categories). Lots are reached from Inventory ("All lots"), Tasks and Home.
+- **Receive delivery** and **Record usage** are fixed at the top right of every page (in the top bar on a phone).
+  Record usage first asks which released lot (the ones expiring first at the top).
+- **Home** is an overview: stock by category (items, available with unit, lots in quarantine; "View all" opens
+  Inventory filtered to the category), task counts with the three most urgent, and the 10 latest activities.
+- **Tasks** holds the work lists, grouped by type (inspection, release review, receiving & documents, missing
+  documents, monthly count, item and supplier records), with search, category, type and for-you / all filters.
 
 Items have a **description** (size, material, color), an **owner** (SVLSG or a client), an optional **dedicated
 product** and a **usual supplier** (separate from the owner). Recording production use of an item for a product other
@@ -105,11 +120,17 @@ src/lib/workflow.ts    the one workflow selector: stage, queues, current task, w
 src/lib/work-queries.ts database queries for queues and the Lots list (counts, filters, pagination)
 src/lib/inspection.ts  F.WD.003 draft / confirm rules
 src/lib/lot-fixes.ts   lot requirements → Fix forms and the "What's next" sentence and button
-src/lib/navigation.ts  sidebar groups — add a module (Raw materials, Production, Export…) here
+src/lib/navigation.ts  sidebar (main group + Settings) — add a module (Raw materials, Production, Export…) here
+src/lib/overview.ts    Home / Tasks queries: stock by category, missing documents, monthly counts, recent activity
+src/lib/inventory.ts   item stock and inventory-list columns
 src/proxy.ts           first visit (no user chosen yet) → /welcome
 src/app/welcome/       onboarding: welcome, "Who are you?", what you can do
 src/app/(app)/         everything with the sidebar (layout.tsx):
-  page.tsx             Home "My work": queues (inspection / release review / receiving & documents), ≤10 entries, for-you filter
+  page.tsx             Home overview: stock by category, task counts + 3 most urgent, recent activity
+  tasks/               Tasks: work lists grouped by type, with filters
+  inventory/           Inventory: stock per item, per-category columns
+  usage/               "Record usage": pick a released lot
+  settings/categories/ category settings (read-only)
   receive/             receiving wizard (spec §4.1)
   lots/                lots list (server-side filters + pagination) + lot detail (inspection F.WD.003, release, usage)
                        lot detail (top: identity, steps, what's next, open requirements; tabs: Details | Documents | Inspection | History)

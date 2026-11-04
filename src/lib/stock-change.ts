@@ -48,6 +48,6 @@ export async function applyStockChange(
     delete audited.clientRequestId;
     await auditCreate(tx, { userId: input.userId, table: "InventoryTransaction", recordId: txn.id, values: audited, reason: change.reason! });
     await refreshLotWorkflow(tx, { id: input.lotId });
-    return { balance: balance + change.qty!, unit: itemUnit(lot.item), type: change.type };
+    return { balance: balance + change.qty!, qty: change.qty!, unit: itemUnit(lot.item), type: change.type };
   });
 }
