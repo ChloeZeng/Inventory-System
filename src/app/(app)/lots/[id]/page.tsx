@@ -66,7 +66,10 @@ export default async function LotDetailPage({
         documents: { include: { uploadedBy: true }, orderBy: { uploadedAt: "desc" } },
         item: { include: { documents: { where: { type: "Spec sheet" }, include: { uploadedBy: true } } } },
         inspections: { include: { inspectedBy: true, confirmedBy: true }, orderBy: { id: "desc" } },
-        transactions: { include: { operator: true, room: true }, orderBy: [{ date: "asc" }, { id: "asc" }] },
+        transactions: {
+          include: { operator: true, room: true, issueLine: { select: { issueId: true, issue: { select: { issueNo: true } } } } },
+          orderBy: [{ date: "asc" }, { id: "asc" }],
+        },
       },
     }),
     prisma.location.findMany({ orderBy: { name: "asc" } }),
@@ -503,7 +506,14 @@ export default async function LotDetailPage({
                   <td className="px-4 py-2">{t.room?.name ?? "—"}</td>
                   <td className="px-4 py-2">{t.productOrCustomer ?? "—"}</td>
                   <td className="px-4 py-2">{t.operator.name}</td>
-                  <td className="px-4 py-2 text-slate-600">{[t.reason && `Reason: ${t.reason}`, t.notes].filter(Boolean).join(" · ")}</td>
+                  <td className="px-4 py-2 text-slate-600">
+                    {t.issueLine && (
+                      <Link href={`/issues/${t.issueLine.issueId}`} className="mr-1 font-mono text-sky-700 hover:underline">
+                        {t.issueLine.issue.issueNo}
+                      </Link>
+                    )}
+                    {[t.reason && `Reason: ${t.reason}`, t.issueLine ? null : t.notes].filter(Boolean).join(" · ")}
+                  </td>
                 </tr>,
               );
               return acc;

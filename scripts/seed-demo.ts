@@ -22,6 +22,7 @@ import { refreshLotWorkflow } from "../src/lib/workflow";
 import { loadAnsiTables, samplingPlan } from "../src/lib/sampling";
 import { UPLOAD_ROOT } from "../src/lib/uploads";
 import { itemSettings } from "../src/lib/category-config";
+import { confirmIssue, createIssue, type IssueInput } from "../src/lib/material-issue-db";
 import { DEMO_USERS, upsertAnsiTables, upsertCategories, upsertLocations, CATEGORIES } from "../prisma/catalog";
 import { demoPdf, demoPng } from "./demo-files";
 
@@ -274,6 +275,8 @@ async function clearDatabase() {
   await prisma.$transaction([
     prisma.auditLog.deleteMany(),
     prisma.inventoryTransaction.deleteMany(),
+    prisma.materialIssueLine.deleteMany(),
+    prisma.materialIssue.deleteMany(),
     prisma.inspection.deleteMany(),
     prisma.document.deleteMany(),
     prisma.lot.deleteMany(),
@@ -473,6 +476,51 @@ async function main() {
       }
     });
   }
+
+  // Material issues (production runs), made through the app's own functions:
+  // one confirmed (with a production loss and a return), one waiting for confirmation.
+  const lotOf = async (batch: string) => prisma.lot.findFirstOrThrow({ where: { supplierBatchNo: batch } });
+  async function issue(when: string, by: string, input: Omit<IssueInput, "date" | "lines">, lines: { batch: string; qty: number; reason?: string }[]) {
+    const last = await prisma.auditLog.findFirst({ orderBy: { id: "desc" }, select: { id: true } });
+    const rows = await Promise.all(lines.map(async (l) => ({ lot: await lotOf(l.batch), ...l })));
+    const r = await createIssue(prisma, users[by].id, {
+      ...input,
+      date: day(when),
+      lines: rows.map((x) => ({ itemId: x.lot.itemId, lotId: x.lot.id, plannedQty: String(x.qty), productReason: x.reason ?? null })),
+    });
+    if (!("id" in r) || !r.id) throw new Error(`Demo material issue not created: ${JSON.stringify(r)}`);
+    await prisma.auditLog.updateMany({ where: { id: { gt: last?.id ?? 0 } }, data: { at: at(when, 8) } });
+    await prisma.materialIssue.update({ where: { id: r.id }, data: { createdAt: at(when, 8) } });
+    return r.id;
+  }
+  const confirmedId = await issue("2026-10-28", "A2", { product: LIQI_PRODUCT, client: "LiQi", batchNo: "EG-MT-2610-01", notes: null }, [
+    { batch: "MTE-26-0412", qty: 10 },
+    { batch: "LQ401263093", qty: 5000 },
+    { batch: "SGC-2608-117", qty: 5000 },
+  ]);
+  {
+    const last = await prisma.auditLog.findFirst({ orderBy: { id: "desc" }, select: { id: true } });
+    const lines = await prisma.materialIssueLine.findMany({ where: { issueId: confirmedId }, orderBy: { sortOrder: "asc" } });
+    const actual: [string, string, string][] = [["9", "1", "0"], ["4950", "50", "0"], ["4980", "0", "20"]];
+    const r = await confirmIssue(
+      prisma,
+      users.A3.id,
+      confirmedId,
+      Object.fromEntries(lines.map((l, i) => [l.id, { actual: actual[i][0], loss: actual[i][1], returned: actual[i][2] }])),
+      null,
+    );
+    if (!("ok" in r)) throw new Error(`Demo material issue not confirmed: ${JSON.stringify(r)}`);
+    await prisma.auditLog.updateMany({ where: { id: { gt: last?.id ?? 0 } }, data: { at: at("2026-10-29", 16) } });
+    await prisma.materialIssue.update({ where: { id: confirmedId }, data: { confirmedAt: at("2026-10-29", 16) } });
+    await prisma.inventoryTransaction.updateMany({ where: { issueLine: { issueId: confirmedId } }, data: { createdAt: at("2026-10-29", 16) } });
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  await issue(today, "A1", { product: "Vitamin C 1000mg (SVLSG)", client: null, batchNo: "VC-2611-01", notes: "Second shift" }, [
+    { batch: "VC1000-2609", qty: 20000 },
+    { batch: "MDLSM2605131-01", qty: 20000 },
+    // dedicated to EGUOO-Milk Thistle: used here with a reason (shows the warning on the issue)
+    { batch: "LQ401263093", qty: 2000, reason: "LiQi approved using spare bottles for this run" },
+  ]);
 
   const refreshed = await refreshLotWorkflow(prisma, {});
   const counts = {

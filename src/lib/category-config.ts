@@ -90,6 +90,9 @@ export type CategoryConfig = {
   inspectionChecklist: InspectionQuestion[];
   // default inventory list columns
   inventoryColumns: InventoryColumn[];
+  // which lot a material issue suggests first: "fefo" = earliest expiry first (raw ingredients),
+  // "fifo" = oldest received first (the default)
+  pickOrder: "fefo" | "fifo";
 };
 
 const EMPTY: CategoryConfig = {
@@ -99,6 +102,7 @@ const EMPTY: CategoryConfig = {
   itemRequirements: [],
   inspectionChecklist: [],
   inventoryColumns: [],
+  pickOrder: "fifo",
 };
 
 export function parseCategoryConfig(json: string | null | undefined): CategoryConfig {
@@ -115,6 +119,7 @@ export function parseCategoryConfig(json: string | null | undefined): CategoryCo
       itemRequirements: raw.itemRequirements ?? [],
       inspectionChecklist: raw.inspectionChecklist ?? [],
       inventoryColumns: raw.inventoryColumns ?? [],
+      pickOrder: raw.pickOrder === "fefo" ? "fefo" : "fifo",
     };
   } catch {
     return EMPTY;

@@ -5,6 +5,7 @@ import type { AuditLog, User } from "@prisma/client";
 import { prisma } from "./prisma";
 import { parseCategoryConfig } from "./category-config";
 import { segregationLabel, supplierTypeLabel, transactionTypeLabel } from "./constants";
+import { issueStatusLabel } from "./material-issue";
 import { formatDate, formatDateTime, formatMoney } from "@/components/ui";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -95,15 +96,40 @@ const FIELD_LABELS: Record<string, string> = {
   minorDefects: "Minor defects",
   defectNotes: "Defect notes",
   comments: "Comments",
+  // material issue (production run)
+  issueNo: "Material issue no.",
+  product: "Product",
+  client: "Client",
+  batchNo: "Production batch no.",
+  createdById: "Created by",
+  cancelledById: "Cancelled by",
+  cancelledAt: "Cancelled at",
+  cancelReason: "Cancel reason",
+  confirmNote: "Confirmation note",
+  issueId: "Material issue",
+  issueLineId: "Material issue line",
+  plannedQty: "Planned qty",
+  actualQty: "Actual qty used",
+  lossQty: "Loss",
+  returnedQty: "Returned",
+  productReason: "Reason (dedicated to another product)",
+  reason: "Reason",
+};
+
+// Where a field means something else on one table (confirming a material issue is not a QC step).
+const TABLE_FIELD_LABELS: Record<string, Record<string, string>> = {
+  MaterialIssue: { confirmedById: "Confirmed by", status: "Status" },
 };
 
 const TABLE_LABELS: Record<string, string> = {
   InventoryTransaction: "Inventory transaction",
+  MaterialIssue: "Material issue",
+  MaterialIssueLine: "Material issue line",
 };
 
 const ROLE_LABELS: Record<string, string> = { user: "User", admin: "Admin", warehouse: "Warehouse (removed role)", qc: "QC (removed role)" };
 
-const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById", "confirmedById"];
+const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById", "confirmedById", "createdById", "cancelledById"];
 
 function humanize(field: string) {
   const s = field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
@@ -124,7 +150,7 @@ function recordIds(rows: AuditLog[], table: string) {
 
 async function nameMaps(rows: AuditLog[]) {
   const lotIds = [...ids(rows, ["lotId"]), ...recordIds(rows, "Lot")];
-  const [categories, suppliers, items, receipts, lots, locations, rooms, users, documents, transactions, allCategories] =
+  const [categories, suppliers, items, receipts, lots, locations, rooms, users, documents, transactions, allCategories, issues, issueLines] =
     await Promise.all([
       prisma.category.findMany({ where: { id: { in: ids(rows, ["categoryId"]) } } }),
       prisma.supplier.findMany({ where: { id: { in: [...ids(rows, ["supplierId"]), ...recordIds(rows, "Supplier")] } } }),
@@ -137,6 +163,11 @@ async function nameMaps(rows: AuditLog[]) {
       prisma.document.findMany({ where: { id: { in: recordIds(rows, "Document") } } }),
       prisma.inventoryTransaction.findMany({ where: { id: { in: recordIds(rows, "InventoryTransaction") } } }),
       prisma.category.findMany({ select: { config: true } }),
+      prisma.materialIssue.findMany({ where: { id: { in: [...ids(rows, ["issueId"]), ...recordIds(rows, "MaterialIssue")] } }, select: { id: true, issueNo: true } }),
+      prisma.materialIssueLine.findMany({
+        where: { id: { in: [...ids(rows, ["issueLineId"]), ...recordIds(rows, "MaterialIssueLine")] } },
+        select: { id: true, sortOrder: true, issue: { select: { issueNo: true } } },
+      }),
     ]);
 
   const lotName = (l: (typeof lots)[number]) => l.supplierBatchNo ?? l.lotNo ?? `Lot #${l.id}`;
@@ -148,6 +179,8 @@ async function nameMaps(rows: AuditLog[]) {
     lotId: new Map(lots.map((l) => [l.id, lotName(l)])),
     locationId: new Map(locations.map((l) => [l.id, l.name])),
     roomId: new Map(rooms.map((r) => [r.id, `${r.name} (${r.location.name})`])),
+    issueId: new Map(issues.map((i) => [i.id, i.issueNo])),
+    issueLineId: new Map(issueLines.map((l) => [l.id, `${l.issue.issueNo} line ${l.sortOrder}`])),
   };
   const userNames = new Map(users.map((u) => [u.id, u.name]));
   for (const f of USER_FIELDS) fk[f] = userNames;
@@ -160,6 +193,8 @@ async function nameMaps(rows: AuditLog[]) {
     Lot: new Map(lots.map((l) => [l.id, lotName(l)])),
     Document: new Map(documents.map((d) => [d.id, `${d.type} — ${d.fileName}`])),
     Inspection: new Map(recordIds(rows, "Inspection").map((id) => [id, `F.WD.003 #${id}`])),
+    MaterialIssue: new Map(issues.map((i) => [i.id, i.issueNo])),
+    MaterialIssueLine: new Map(issueLines.map((l) => [l.id, `${l.issue.issueNo} line ${l.sortOrder}`])),
     InventoryTransaction: new Map(
       transactions.map((t) => [t.id, `${transactionTypeLabel(t.type)} ${t.qty > 0 ? "+" : ""}${t.qty.toLocaleString()}`]),
     ),
@@ -196,6 +231,7 @@ function formatValue(table: string, field: string, raw: string | null, maps: Map
   }
   if (field === "type" && table === "Supplier") return supplierTypeLabel(raw);
   if (field === "type" && table === "InventoryTransaction") return transactionTypeLabel(raw);
+  if (field === "status" && table === "MaterialIssue") return issueStatusLabel(raw);
   if (field === "supplierType") return supplierTypeLabel(raw);
   if (field === "role" && table === "User") return ROLE_LABELS[raw] ?? raw;
   if (field === "segregation") return segregationLabel(raw);
@@ -246,7 +282,7 @@ export function groupEvents(rows: (AuditLog & { user: User | null })[], maps: Ma
     const oldV = formatValue(r.tableName, r.field, r.oldValue, maps);
     const newV = formatValue(r.tableName, r.field, r.newValue, maps);
     if (oldV === null && newV === null) continue;
-    ev.changes.push({ label: FIELD_LABELS[r.field] ?? humanize(r.field), old: oldV, new: newV });
+    ev.changes.push({ label: TABLE_FIELD_LABELS[r.tableName]?.[r.field] ?? FIELD_LABELS[r.field] ?? humanize(r.field), old: oldV, new: newV });
   }
   // rows come newest-first; show each event's fields in the order they were written
   for (const ev of events) ev.changes.reverse();

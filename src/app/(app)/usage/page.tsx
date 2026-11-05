@@ -33,7 +33,20 @@ export default async function UsagePickerPage({ searchParams }: { searchParams: 
 
   return (
     <>
-      <PageHeader title="Record usage" subtitle="Which lot is the stock taken from? Only released lots with stock are listed — the ones expiring first at the top." />
+      <PageHeader
+        title="Record usage"
+        subtitle="Which lot is the stock taken from? Only released lots with stock are listed — the ones expiring first at the top."
+        actions={
+          <>
+            <Link href="/issues" className={secondaryButtonClass}>
+              Material issues
+            </Link>
+            <Link href="/issues/new" className={buttonClass}>
+              Production run (several items)
+            </Link>
+          </>
+        }
+      />
 
       <form className="mb-3 flex flex-wrap items-center gap-2" role="search" aria-label="Find a lot">
         <input name="q" defaultValue={q} placeholder="Item, item code or lot no." aria-label="Search" className={`${inputClass} max-w-xs`} autoFocus />

@@ -35,3 +35,10 @@ export async function nextReceivingNo(tx: Tx, date: Date) {
   const n = await nextCounter(tx, `REC-${year}`);
   return `REC-${year}-${String(n).padStart(3, "0")}`;
 }
+
+// New material issue number, e.g. MI-2026-001 (resets each year).
+export async function nextIssueNo(tx: Tx, date: Date) {
+  const year = date.getUTCFullYear();
+  const n = await nextCounter(tx, `MI-${year}`);
+  return `MI-${year}-${String(n).padStart(3, "0")}`;
+}

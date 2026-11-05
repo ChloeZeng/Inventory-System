@@ -115,6 +115,7 @@ function config(opts: {
   inspection: boolean;
   columns: InventoryColumn[];
   subTypes?: CategoryConfig["subTypes"];
+  pickOrder?: CategoryConfig["pickOrder"];
 }): CategoryConfig {
   return {
     subTypes: opts.subTypes ?? [],
@@ -123,6 +124,7 @@ function config(opts: {
     itemRequirements: itemRequirements(opts.specFields),
     inspectionChecklist: opts.inspection ? F_WD_003 : [],
     inventoryColumns: opts.columns,
+    pickOrder: opts.pickOrder ?? "fifo",
   };
 }
 
@@ -175,6 +177,7 @@ export const CATEGORIES: CategorySeed[] = [
       beforeRelease: [PACKING_LIST_OR_COA, ...LAB_TESTS],
       inspection: false,
       columns: [col("name", "Name"), OWNER, LOCATION, col("nearestExpiry", "Nearest expiry"), AVAILABLE],
+      pickOrder: "fefo", // material issues suggest the earliest expiry first
     }),
   },
   {

@@ -85,6 +85,14 @@ month.
 - **Item page**: code, name, owner / dedicated product, Available with chips and locations at the top; "Edit" opens
   the form in a modal; "Record complete" badge or the list of what is missing; tabs Lots (columns selectable,
   remembered) | Usage | Documents | Details | Audit history.
+- **Material issue** (usage form for a production run; "Record usage" → "Production run"): product, client, production
+  batch no., date and one line per item / lot / planned quantity. The lot is suggested — raw ingredients earliest
+  expiry first, others oldest received first (`pickOrder` in the category config) — from released lots only, after
+  what other open issues reserve. An item dedicated to another product needs a reason. "Print pick list" gives an
+  English sheet for production (product, batch, item, lot, quantity, location). After production, "Confirm" takes the
+  actual quantity and loss out of the lots (transactions linked to the line); returned quantities stay in stock; if
+  actual + loss + returned differs from planned, a note is required. Open issues are listed under Tasks; each line
+  shows in its item's Usage tab. Every step is in the audit trail.
 - **Tasks** holds the work lists, grouped by type (inspection, release review, receiving & documents, missing
   documents, monthly count, item and supplier records), with search, category, type and for-you / all filters.
 
@@ -128,6 +136,7 @@ src/lib/work-queries.ts database queries for queues and the Lots list (counts, f
 src/lib/inspection.ts  F.WD.003 draft / confirm rules
 src/lib/lot-fixes.ts   lot requirements → Fix forms and the "What's next" sentence and button
 src/lib/navigation.ts  sidebar (main group + Settings) — add a module (Raw materials, Production, Export…) here
+src/lib/material-issue.ts    material issue rules (lot suggestion, line and confirm checks); -db.ts: create / confirm / cancel
 src/lib/overview.ts    Home / Tasks queries: stock by category, missing documents, monthly counts, recent activity
 src/lib/inventory-view.ts Inventory list: columns, filters, rows by item / by lot, export table
 src/lib/spreadsheet.ts CSV and .xlsx writer (no dependency)
@@ -139,6 +148,8 @@ src/app/(app)/         everything with the sidebar (layout.tsx):
   tasks/               Tasks: work lists grouped by type, with filters
   inventory/           Inventory: by item / by lot, category tabs, column picker, filters, CSV / Excel export
   usage/               "Record usage": pick a released lot
+  issues/              material issues (production runs): list, new, detail with confirm / cancel
+src/app/print/         printable pages without the app shell (pick list)
   settings/categories/ category settings (read-only)
   receive/             receiving wizard (spec §4.1)
   lots/                lots list (server-side filters + pagination) + lot detail (inspection F.WD.003, release, usage)

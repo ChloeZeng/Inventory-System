@@ -18,6 +18,7 @@ const TYPES = [
   { key: "release", label: QUEUES.release.label },
   { key: "followup", label: QUEUES.followup.label },
   { key: "documents", label: "Missing documents" },
+  { key: "issues", label: "Material issues to confirm" },
   { key: "count", label: "Monthly count due" },
   { key: "records", label: "Item and supplier records" },
 ] as const;
@@ -38,7 +39,13 @@ export default async function TasksPage({
   const take = only ? 50 : 10;
   const want = (t: TaskType) => !only || only === t;
 
-  const [categories, counts, docs, countTotal, counted, records] = await Promise.all([
+  // material issues waiting for confirmation after production (search: product, batch, issue no.)
+  const issueWhere = {
+    status: "open",
+    ...(filters.q ? { OR: [{ product: { contains: filters.q } }, { batchNo: { contains: filters.q } }, { issueNo: { contains: filters.q } }] } : {}),
+    ...(filters.categoryId ? { lines: { some: { item: { categoryId: filters.categoryId } } } } : {}),
+  };
+  const [categories, counts, docs, countTotal, counted, records, issueTotal, issues] = await Promise.all([
     prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     queueCounts(user, filters),
     missingDocuments(filters),
@@ -46,6 +53,10 @@ export default async function TasksPage({
     want("count") ? countsDue(filters, take) : Promise.resolve([]),
     // item / supplier records are not lot work: the lot filters do not apply to them
     want("records") ? recordsToComplete() : Promise.resolve([]),
+    prisma.materialIssue.count({ where: issueWhere }),
+    want("issues")
+      ? prisma.materialIssue.findMany({ where: issueWhere, include: { createdBy: true, _count: { select: { lines: true } } }, orderBy: [{ date: "asc" }, { id: "asc" }], take })
+      : Promise.resolve([]),
   ]);
   const entries = Object.fromEntries(
     await Promise.all(QUEUE_KEYS.map(async (k) => [k, want(k) ? await queueEntries(k, user, filters, take, mine) : []] as const)),
@@ -55,6 +66,7 @@ export default async function TasksPage({
     release: mine ? counts.release.mine : counts.release.total,
     followup: mine ? counts.followup.mine : counts.followup.total,
     documents: docs.length,
+    issues: issueTotal,
     count: countTotal,
     records: records.length,
   };
@@ -175,6 +187,38 @@ export default async function TasksPage({
               </ul>
             ) : (
               <Empty>{filtered ? "No lots match these filters." : "No quarantined lot is missing a document."}</Empty>
+            )}
+          </Group>
+        )}
+
+        {want("issues") && (
+          <Group
+            title="Material issues to confirm"
+            count={issueTotal}
+            note="Production runs: enter the actual quantities, loss and returns after production."
+            more={issueTotal > issues.length ? { href: "/issues?status=open", label: `View all ${issueTotal.toLocaleString()} →` } : undefined}
+          >
+            {issues.length ? (
+              <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm shadow-sm">
+                {issues.map((i) => (
+                  <li key={i.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3">
+                    <span className="min-w-0">
+                      <Link href={`/issues/${i.id}`} className="font-semibold text-slate-900 hover:underline">
+                        {i.product}
+                      </Link>{" "}
+                      <span className="font-mono text-xs text-slate-500">{i.issueNo}</span>
+                      <span className="block text-xs text-slate-600">
+                        Batch {i.batchNo} · {formatDate(i.date)} · {plural(i._count.lines, "line")} · created by {i.createdBy.name}
+                      </span>
+                    </span>
+                    <Link href={`/issues/${i.id}`} className={`${secondaryButtonClass} px-3 py-1.5`}>
+                      Confirm quantities
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <Empty>{filtered ? "No material issues match these filters." : "No material issue is waiting for confirmation."}</Empty>
             )}
           </Group>
         )}

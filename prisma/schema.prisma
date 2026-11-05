@@ -40,6 +40,9 @@ model User {
   transactions         InventoryTransaction[]
   auditLogs            AuditLog[]
   preferences          UserPreference[]
+  issuesCreated        MaterialIssue[]        @relation("IssueCreatedBy")
+  issuesConfirmed      MaterialIssue[]        @relation("IssueConfirmedBy")
+  issuesCancelled      MaterialIssue[]        @relation("IssueCancelledBy")
 }
 
 // Per-user view settings (UI preference, not audited): e.g. the chosen inventory columns and
@@ -128,6 +131,7 @@ model Item {
   createdAt  DateTime   @default(now())
   lots       Lot[]
   documents  Document[] // spec sheet lives here (type "Spec sheet")
+  issueLines MaterialIssueLine[]
 }
 
 // One delivery. Can contain several lots.
@@ -191,6 +195,7 @@ model Lot {
   documents            Document[] // box label photo, COA, packing list...
   inspections          Inspection[]
   transactions         InventoryTransaction[]
+  issueLines           MaterialIssueLine[]
 
   // ---- Workflow cache (src/lib/workflow.ts → refreshLotWorkflow) ----
   // Derived from the rules above and rewritten in the same transaction as every change
@@ -275,6 +280,9 @@ model InventoryTransaction {
   type              String
   qty               Int // signed: + into stock, - out of stock. Lot balance = sum of qty, never typed.
   reason            String? // why: required for loss, scrap and count adjustment (also in the audit trail)
+  // set when the transaction comes from confirming a material issue (production run)
+  issueLineId       Int?
+  issueLine         MaterialIssueLine? @relation(fields: [issueLineId], references: [id])
   roomId            Int?
   room              Room?    @relation(fields: [roomId], references: [id])
   productOrCustomer String?
@@ -344,4 +352,52 @@ model AnsiPlan {
   arrow      String? // up | down
 
   @@unique([codeLetter, aql])
+}
+
+// Material issue (usage form for a production run): which lots are picked for one product
+// batch. While "open" its planned quantities are reserved; stock moves only when it is
+// confirmed after production (actual use and loss become transactions linked to the line).
+model MaterialIssue {
+  id                 Int                 @id @default(autoincrement())
+  issueNo            String              @unique // MI-YYYY-###
+  product            String
+  client             String?
+  batchNo            String // production batch no.
+  date               DateTime // production date (calendar date)
+  status             String              @default("open") // open | confirmed | cancelled
+  notes              String?
+  createdById        Int
+  createdBy          User                @relation("IssueCreatedBy", fields: [createdById], references: [id])
+  createdAt          DateTime            @default(now())
+  confirmedById      Int?
+  confirmedBy        User?               @relation("IssueConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt        DateTime?
+  confirmNote        String? // why actual + loss + returned differs from planned
+  cancelledById      Int?
+  cancelledBy        User?               @relation("IssueCancelledBy", fields: [cancelledById], references: [id])
+  cancelledAt        DateTime?
+  cancelReason       String?
+  lines              MaterialIssueLine[]
+
+  @@index([status])
+}
+
+model MaterialIssueLine {
+  id            Int                    @id @default(autoincrement())
+  issueId       Int
+  issue         MaterialIssue          @relation(fields: [issueId], references: [id])
+  sortOrder     Int
+  itemId        Int
+  item          Item                   @relation(fields: [itemId], references: [id])
+  lotId         Int
+  lot           Lot                    @relation(fields: [lotId], references: [id])
+  plannedQty    Int
+  actualQty     Int? // set on confirm
+  lossQty       Int?
+  returnedQty   Int?
+  productReason String? // required when the item is dedicated to another product
+  transactions  InventoryTransaction[]
+
+  @@index([lotId])
+  @@index([itemId])
 }

@@ -55,14 +55,20 @@ export default async function ItemDetailPage({ params, searchParams }: { params:
   if (!item) notFound();
 
   const user = await getCurrentUser();
-  const [suppliers, usage, savedLotColumns] = await Promise.all([
+  const [suppliers, usage, savedLotColumns, pendingLines] = await Promise.all([
     prisma.supplier.findMany({ where: { OR: [{ active: true }, { id: item.supplierId ?? -1 }] }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
     prisma.inventoryTransaction.findMany({
       where: { lot: { itemId: item.id }, type: { not: "receive" } },
-      include: { lot: true, operator: true, room: true },
+      include: { lot: true, operator: true, room: true, issueLine: { include: { issue: { select: { id: true, issueNo: true } } } } },
       orderBy: [{ date: "desc" }, { id: "desc" }],
     }),
     user ? getPreference<string[]>(user.id, LOTS_PREF) : null,
+    // material issues not yet confirmed: planned, reserved, not taken from stock yet
+    prisma.materialIssueLine.findMany({
+      where: { itemId: item.id, issue: { status: "open" } },
+      include: { lot: true, issue: { include: { createdBy: true } } },
+      orderBy: { issue: { date: "desc" } },
+    }),
   ]);
 
   const settings = itemSettings(item.category, item.subType);
@@ -136,9 +142,30 @@ export default async function ItemDetailPage({ params, searchParams }: { params:
 
   const usageTab = (
     <Table
-      head={["Date", "Lot", "Type", "Qty", "Product / customer", "Room", "By", "Reason / notes"]}
-      empty={usage.length === 0 && <p className="px-4 py-6 text-center text-sm text-slate-500">Nothing used from this item yet.</p>}
+      head={["Date", "Lot", "Type", "Qty", "Product / customer", "Room", "By", "Record / reason / notes"]}
+      empty={usage.length + pendingLines.length === 0 && <p className="px-4 py-6 text-center text-sm text-slate-500">Nothing used from this item yet.</p>}
     >
+      {pendingLines.map((l) => (
+        <tr key={`p${l.id}`} className="bg-amber-50/60">
+          <td className="whitespace-nowrap px-4 py-2">{formatDate(l.issue.date)}</td>
+          <td className="px-4 py-2 font-mono">
+            <Link href={`/lots/${l.lotId}`} className="text-sky-700 hover:underline">
+              {lotLabel(l.lot)}
+            </Link>
+          </td>
+          <td className="px-4 py-2">Planned (not confirmed)</td>
+          <td className="whitespace-nowrap px-4 py-2 tabular-nums text-slate-500">{formatQty(l.plannedQty, unit)} reserved</td>
+          <td className="px-4 py-2">{l.issue.product}</td>
+          <td className="px-4 py-2">—</td>
+          <td className="px-4 py-2">{l.issue.createdBy.name}</td>
+          <td className="px-4 py-2">
+            <Link href={`/issues/${l.issueId}`} className="font-mono text-sky-700 hover:underline">
+              {l.issue.issueNo}
+            </Link>{" "}
+            · batch {l.issue.batchNo}
+          </td>
+        </tr>
+      ))}
       {usage.map((t) => (
         <tr key={t.id}>
           <td className="whitespace-nowrap px-4 py-2">{formatDate(t.date)}</td>
@@ -155,7 +182,18 @@ export default async function ItemDetailPage({ params, searchParams }: { params:
           <td className="px-4 py-2">{t.productOrCustomer ?? "—"}</td>
           <td className="px-4 py-2">{t.room?.name ?? "—"}</td>
           <td className="px-4 py-2">{t.operator.name}</td>
-          <td className="px-4 py-2 text-slate-600">{[t.reason, t.notes].filter(Boolean).join(" · ") || "—"}</td>
+          <td className="px-4 py-2 text-slate-600">
+            {t.issueLine ? (
+              <>
+                <Link href={`/issues/${t.issueLine.issue.id}`} className="font-mono text-sky-700 hover:underline">
+                  {t.issueLine.issue.issueNo}
+                </Link>
+                {t.reason && ` · ${t.reason}`}
+              </>
+            ) : (
+              [t.reason, t.notes].filter(Boolean).join(" · ") || "—"
+            )}
+          </td>
         </tr>
       ))}
     </Table>
@@ -314,7 +352,7 @@ export default async function ItemDetailPage({ params, searchParams }: { params:
         <DetailTabs
           tabs={[
             { key: "lots", label: "Lots", count: item.lots.length, content: lotsTab },
-            { key: "usage", label: "Usage", count: usage.length, content: usageTab },
+            { key: "usage", label: "Usage", count: usage.length + pendingLines.length, content: usageTab },
             { key: "documents", label: "Documents", count: item.documents.length, content: documentsTab },
             { key: "details", label: "Details", content: detailsTab },
             { key: "history", label: "Audit history", content: auditTab },
