@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { USER_COOKIE, getCurrentUser } from "@/lib/current-user";
+import { PREFERENCE_KEY } from "@/lib/preferences";
 
 async function signInAs(userId: number) {
   const user = await prisma.user.findFirst({ where: { id: userId, active: true } });
@@ -37,4 +38,22 @@ export async function finishTour() {
 export async function skipTour() {
   await finishTour();
   redirect("/");
+}
+
+// Remember a view setting for the signed-in user (columns, filters). null forgets it.
+export async function savePreference(key: string, value: unknown) {
+  const user = await getCurrentUser();
+  if (!user) return;
+  if (!PREFERENCE_KEY.test(key)) throw new Error("Unknown preference.");
+  if (value === null) {
+    await prisma.userPreference.deleteMany({ where: { userId: user.id, key } });
+    return;
+  }
+  const json = JSON.stringify(value);
+  if (json.length > 4000) throw new Error("Preference too large.");
+  await prisma.userPreference.upsert({
+    where: { userId_key: { userId: user.id, key } },
+    create: { userId: user.id, key, value: json },
+    update: { value: json },
+  });
 }

@@ -39,6 +39,20 @@ model User {
   inspectionsConfirmed Inspection[]           @relation("InspectionConfirmedBy")
   transactions         InventoryTransaction[]
   auditLogs            AuditLog[]
+  preferences          UserPreference[]
+}
+
+// Per-user view settings (UI preference, not audited): e.g. the chosen inventory columns and
+// filters. key: "inventory:item:<categoryId|all>", "item:lots"… value: JSON.
+model UserPreference {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
 }
 
 model Location {

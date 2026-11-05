@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState } from "react";
+import { startTransition, useActionState } from "react";
 import type { SpecField } from "@/lib/category-config";
 import type { ActionState } from "@/lib/forms";
 import { Field, FormMessage, buttonClass, inputClass } from "@/components/ui";
 import { DescriptionFields, ItemExtrasFields } from "./item-fields";
+import { useCloseOnSuccess } from "@/components/detail/shell";
 
 type Props = {
   action: (prev: ActionState, formData: FormData) => Promise<ActionState>;
@@ -25,11 +26,20 @@ type Props = {
 
 export function ItemForm({ action, specFields, suppliers, categoryId, subType, initial }: Props) {
   const [state, formAction, pending] = useActionState(action, {});
+  useCloseOnSuccess(state); // in a modal (item page "Edit"): close it and show the result
   const isEdit = !!initial;
   const fe = state.fieldErrors ?? {};
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form
+      className="space-y-4"
+      onSubmit={(e) => {
+        // manual dispatch: a refused save keeps what was typed
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        startTransition(() => formAction(fd));
+      }}
+    >
       {categoryId && <input type="hidden" name="categoryId" value={categoryId} />}
       {subType && <input type="hidden" name="subType" value={subType} />}
 

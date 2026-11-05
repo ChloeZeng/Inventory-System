@@ -284,6 +284,7 @@ async function clearDatabase() {
     prisma.location.deleteMany(),
     prisma.category.deleteMany(),
     prisma.counter.deleteMany(),
+    prisma.userPreference.deleteMany(),
     prisma.user.deleteMany(),
     prisma.ansiPlan.deleteMany(),
     prisma.ansiSampleSize.deleteMany(),

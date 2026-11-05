@@ -55,7 +55,7 @@ fields, so they can be edited later without code changes. Item codes are always 
 A new item in a category with sub-types first asks which one (e.g. "Canister or packet?"). A sub-type can have its
 own code prefix, unit, test path and requirements (`itemSettings` in `src/lib/category-config.ts`). "In-house" tablets
 are only a flag for now; in-house production will come from a future production module. Each category also stores
-its default inventory columns (`inventoryColumns`; values from `src/lib/inventory.ts`).
+its default inventory columns (`inventoryColumns`; values from `src/lib/inventory-view.ts`).
 
 ### Stock
 
@@ -78,6 +78,13 @@ month.
   Record usage first asks which released lot (the ones expiring first at the top).
 - **Home** is an overview: stock by category (items, available with unit, lots in quarantine; "View all" opens
   Inventory filtered to the category), task counts with the three most urgent, and the 10 latest activities.
+- **Inventory**: category tabs, "By item" / "By lot", each category's default columns plus a column picker and
+  filters (stock, status, expiry, location, owner) — remembered per user, per view and tab. Available shows
+  "Released · Quarantine" chips. "Export Excel" / "Export CSV" export exactly the current view (all pages).
+  A warning sign next to an item code means its record is incomplete (hover for what is missing).
+- **Item page**: code, name, owner / dedicated product, Available with chips and locations at the top; "Edit" opens
+  the form in a modal; "Record complete" badge or the list of what is missing; tabs Lots (columns selectable,
+  remembered) | Usage | Documents | Details | Audit history.
 - **Tasks** holds the work lists, grouped by type (inspection, release review, receiving & documents, missing
   documents, monthly count, item and supplier records), with search, category, type and for-you / all filters.
 
@@ -122,13 +129,15 @@ src/lib/inspection.ts  F.WD.003 draft / confirm rules
 src/lib/lot-fixes.ts   lot requirements → Fix forms and the "What's next" sentence and button
 src/lib/navigation.ts  sidebar (main group + Settings) — add a module (Raw materials, Production, Export…) here
 src/lib/overview.ts    Home / Tasks queries: stock by category, missing documents, monthly counts, recent activity
-src/lib/inventory.ts   item stock and inventory-list columns
+src/lib/inventory-view.ts Inventory list: columns, filters, rows by item / by lot, export table
+src/lib/spreadsheet.ts CSV and .xlsx writer (no dependency)
+src/lib/preferences.ts per-user view settings (UserPreference: columns, filters)
 src/proxy.ts           first visit (no user chosen yet) → /welcome
 src/app/welcome/       onboarding: welcome, "Who are you?", what you can do
 src/app/(app)/         everything with the sidebar (layout.tsx):
   page.tsx             Home overview: stock by category, task counts + 3 most urgent, recent activity
   tasks/               Tasks: work lists grouped by type, with filters
-  inventory/           Inventory: stock per item, per-category columns
+  inventory/           Inventory: by item / by lot, category tabs, column picker, filters, CSV / Excel export
   usage/               "Record usage": pick a released lot
   settings/categories/ category settings (read-only)
   receive/             receiving wizard (spec §4.1)

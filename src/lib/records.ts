@@ -99,14 +99,14 @@ function docParam(req: Requirement) {
 export function fixHref(req: Requirement, ctx: FixContext): string {
   if (req.source === "inspection") return `/lots/${ctx.lotId}?tab=inspection`;
   if (req.source === "document") {
-    if (req.attachedTo === "item") return `/items/${ctx.itemId}${docParam(req)}#documents`;
+    if (req.attachedTo === "item") return `/items/${ctx.itemId}?tab=documents${docParam(req).replace("?", "&")}`;
     if (req.attachedTo === "supplier") return `/suppliers/${ctx.supplierId}${docParam(req)}#documents`;
     return `/lots/${ctx.lotId}?fix=${req.key}`;
   }
   const path = req.path ?? req.anyOf?.[0] ?? "";
   const [record, ...rest] = path.split(".");
   const field = rest.at(-1);
-  if (record === "item") return `/items/${ctx.itemId}#spec_${field}`;
+  if (record === "item") return `/items/${ctx.itemId}?do=edit#spec_${field}`;
   if (record === "supplier") return `/suppliers/${ctx.supplierId}#field-${field}`;
   return `/lots/${ctx.lotId}?fix=${req.key}`;
 }

@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { categoryLabel, parseCategoryConfig, parseSpecs, formatSpecs, subTypeLabel } from "@/lib/category-config";
+import { categoryLabel } from "@/lib/category-config";
 import { itemChecklist } from "@/lib/records";
-import { CompletionBar } from "@/components/progress";
+import { WarningIcon } from "@/components/warning-icon";
 import { Badge, PageHeader, Table, buttonClass, inputClass, secondaryButtonClass } from "@/components/ui";
 
 export default async function ItemsPage({
@@ -32,7 +32,6 @@ export default async function ItemsPage({
     include: {
       category: true,
       documents: { select: { type: true } },
-      _count: { select: { lots: true } },
     },
     orderBy: [{ category: { sortOrder: "asc" } }, { code: "asc" }],
   });
@@ -66,7 +65,7 @@ export default async function ItemsPage({
       </form>
 
       <Table
-        head={["Code", "Name", "Category", "Description", "Owner", "Spec sheet", "Complete", "Lots"]}
+        head={["Code", "Name", "Owner / dedicated product", "Spec sheet"]}
         empty={items.length === 0 && <p className="px-4 py-6 text-center text-sm text-slate-500">No items match.</p>}
       >
         {items.map((i) => (
@@ -75,16 +74,16 @@ export default async function ItemsPage({
               <Link href={`/items/${i.id}`} className="font-mono font-medium text-sky-700 hover:underline">
                 {i.code}
               </Link>
+              {/* only an incomplete record is flagged */}
+              {(() => {
+                const c = itemChecklist(i);
+                return c.complete ? null : <WarningIcon text={`Record incomplete — missing: ${c.open.map((r) => r.req.label).join(", ")}`} />;
+              })()}
               {i.legacyCode && <div className="font-mono text-xs text-slate-500">{i.legacyCode}</div>}
             </td>
             <td className="px-4 py-2">
               {i.name} {!i.active && <Badge>inactive</Badge>}
             </td>
-            <td className="px-4 py-2 text-slate-600">
-              {categoryLabel(i.category)}
-              {i.subType && <div className="text-xs text-slate-500">{subTypeLabel(parseCategoryConfig(i.category.config), i.subType)}</div>}
-            </td>
-            <td className="px-4 py-2 text-slate-600">{formatSpecs(parseCategoryConfig(i.category.config), parseSpecs(i.specs)) || "—"}</td>
             <td className="px-4 py-2 text-slate-600">
               {i.owner}
               {i.dedicatedProduct && <div className="text-xs text-slate-500">for {i.dedicatedProduct}</div>}
@@ -92,10 +91,7 @@ export default async function ItemsPage({
             <td className="px-4 py-2">
               {i.documents.some((d) => d.type === "Spec sheet") ? <Badge tone="green">on file</Badge> : <Badge tone="amber">missing</Badge>}
             </td>
-            <td className="px-4 py-2">
-              <CompletionBar summary={itemChecklist(i)} compact />
-            </td>
-            <td className="px-4 py-2 tabular-nums">{i._count.lots}</td>
+
           </tr>
         ))}
       </Table>
