@@ -42,3 +42,10 @@ export async function nextIssueNo(tx: Tx, date: Date) {
   const n = await nextCounter(tx, `MI-${year}`);
   return `MI-${year}-${String(n).padStart(3, "0")}`;
 }
+
+// New stock count number, e.g. SC-2026-001 (resets each year).
+export async function nextCountNo(tx: Tx, date: Date) {
+  const year = date.getUTCFullYear();
+  const n = await nextCounter(tx, `SC-${year}`);
+  return `SC-${year}-${String(n).padStart(3, "0")}`;
+}

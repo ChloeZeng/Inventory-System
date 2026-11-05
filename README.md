@@ -66,9 +66,14 @@ server action `recordStockChange`; on the lot page: "Record loss or scrap", "Rec
 **Available** (released lots only) and **Quarantine** separately; rejected lots count in neither. A complete item or
 supplier record is marked "Record complete"; a lot's status is only Quarantine / Released / Rejected.
 
-**Monthly count:** every released lot with stock is counted once a calendar month. A count is recorded as a count
-adjustment — the difference found, or 0 when the count matches — so a lot is "Monthly count due" until it has one this
-month.
+**Monthly stock count:** on the last working day of each month (Monday–Friday; company holidays are not known yet) a
+"Monthly count" task is created (one per month; the app creates it when Home, Tasks or Stock counts load, and
+`npm run counts:schedule` can run it from a daily scheduler). The count page lists every lot with stock — any QC
+status — grouped by category and location, with the system quantity; users enter the counted quantity (kept in the
+browser until submitted). A difference needs a reason; on submit each difference becomes a count adjustment
+transaction. The system quantity is re-checked against the ledger on submit (a lot that changed while counting is
+refused). Each completed count is saved as a record under Tasks → Stock counts and can be exported to Excel or CSV.
+"Start a count now" starts an extra (ad hoc) count. A single lot can still get a count adjustment from its page.
 
 ### Navigation
 
@@ -114,6 +119,7 @@ than its dedicated product shows a warning and needs a reason, which is saved in
 | `npm test` | Unit tests (node:test via tsx): workflow selector, inspection rules, demo guard, wording |
 | `npm run db:refresh-workflow` | Recompute every lot's workflow cache (run after changing category requirements) |
 | `npm run db:seed` | Re-run seed data (safe to repeat; never deletes) |
+| `npm run counts:schedule` | Create the monthly stock count task if it is due (for a daily scheduler) |
 | `npm run seed:demo` | **Demo only:** clear the local database and load demo data (refuses anything but a local SQLite file in `prisma/`) |
 | `npm run db:reset` | **Wipe** the local database and re-seed |
 | `npm run db:migrate` | After editing `prisma/schema.prisma`: create and apply a migration |
@@ -137,6 +143,7 @@ src/lib/inspection.ts  F.WD.003 draft / confirm rules
 src/lib/lot-fixes.ts   lot requirements → Fix forms and the "What's next" sentence and button
 src/lib/navigation.ts  sidebar (main group + Settings) — add a module (Raw materials, Production, Export…) here
 src/lib/material-issue.ts    material issue rules (lot suggestion, line and confirm checks); -db.ts: create / confirm / cancel
+src/lib/stock-count.ts       count due dates and line rules; -db.ts: task, sheet, submit; -record.ts: record / export
 src/lib/overview.ts    Home / Tasks queries: stock by category, missing documents, monthly counts, recent activity
 src/lib/inventory-view.ts Inventory list: columns, filters, rows by item / by lot, export table
 src/lib/spreadsheet.ts CSV and .xlsx writer (no dependency)
@@ -149,6 +156,7 @@ src/app/(app)/         everything with the sidebar (layout.tsx):
   inventory/           Inventory: by item / by lot, category tabs, column picker, filters, CSV / Excel export
   usage/               "Record usage": pick a released lot
   issues/              material issues (production runs): list, new, detail with confirm / cancel
+  counts/              stock counts: list, count sheet, completed record, export
 src/app/print/         printable pages without the app shell (pick list)
   settings/categories/ category settings (read-only)
   receive/             receiving wizard (spec §4.1)

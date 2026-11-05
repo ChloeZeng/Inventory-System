@@ -43,6 +43,8 @@ model User {
   issuesCreated        MaterialIssue[]        @relation("IssueCreatedBy")
   issuesConfirmed      MaterialIssue[]        @relation("IssueConfirmedBy")
   issuesCancelled      MaterialIssue[]        @relation("IssueCancelledBy")
+  countsStarted        StockCount[]           @relation("CountStartedBy")
+  countsCompleted      StockCount[]           @relation("CountCompletedBy")
 }
 
 // Per-user view settings (UI preference, not audited): e.g. the chosen inventory columns and
@@ -196,6 +198,7 @@ model Lot {
   inspections          Inspection[]
   transactions         InventoryTransaction[]
   issueLines           MaterialIssueLine[]
+  countLines           StockCountLine[]
 
   // ---- Workflow cache (src/lib/workflow.ts → refreshLotWorkflow) ----
   // Derived from the rules above and rewritten in the same transaction as every change
@@ -283,6 +286,7 @@ model InventoryTransaction {
   // set when the transaction comes from confirming a material issue (production run)
   issueLineId       Int?
   issueLine         MaterialIssueLine? @relation(fields: [issueLineId], references: [id])
+  countLine         StockCountLine?
   roomId            Int?
   room              Room?    @relation(fields: [roomId], references: [id])
   productOrCustomer String?
@@ -400,4 +404,45 @@ model MaterialIssueLine {
 
   @@index([lotId])
   @@index([itemId])
+}
+
+// Stock count: every lot with stock, counted and compared with the system quantity.
+// "monthly" counts are created as a task on the last working day of the month (one per
+// period, e.g. "2026-11"); "adhoc" counts are started by hand. When submitted, differences
+// become count adjustment transactions and the count is kept as a record (exportable).
+model StockCount {
+  id            Int              @id @default(autoincrement())
+  countNo       String           @unique // SC-YYYY-###
+  kind          String // monthly | adhoc
+  period        String?          @unique // monthly: "YYYY-MM"; null for ad hoc counts
+  dueDate       DateTime // monthly: the last working day of the month
+  status        String           @default("open") // open | completed
+  createdAt     DateTime         @default(now())
+  startedById   Int? // null: created on schedule
+  startedBy     User?            @relation("CountStartedBy", fields: [startedById], references: [id])
+  completedById Int?
+  completedBy   User?            @relation("CountCompletedBy", fields: [completedById], references: [id])
+  completedAt   DateTime?
+  countDate     DateTime? // the day the stock was counted
+  notes         String?
+  lines         StockCountLine[]
+
+  @@index([status])
+}
+
+// One counted lot, as recorded when the count was submitted.
+model StockCountLine {
+  id            Int                   @id @default(autoincrement())
+  countId       Int
+  count         StockCount            @relation(fields: [countId], references: [id])
+  lotId         Int
+  lot           Lot                   @relation(fields: [lotId], references: [id])
+  systemQty     Int // the ledger balance when counted
+  countedQty    Int
+  difference    Int // counted − system
+  reason        String? // required when there is a difference
+  transactionId Int?                  @unique // the count adjustment (only when difference ≠ 0)
+  transaction   InventoryTransaction? @relation(fields: [transactionId], references: [id])
+
+  @@unique([countId, lotId])
 }

@@ -23,6 +23,7 @@ import { loadAnsiTables, samplingPlan } from "../src/lib/sampling";
 import { UPLOAD_ROOT } from "../src/lib/uploads";
 import { itemSettings } from "../src/lib/category-config";
 import { confirmIssue, createIssue, type IssueInput } from "../src/lib/material-issue-db";
+import { countSheet, ensureMonthlyCounts, startAdhocCount, submitCount } from "../src/lib/stock-count-db";
 import { DEMO_USERS, upsertAnsiTables, upsertCategories, upsertLocations, CATEGORIES } from "../prisma/catalog";
 import { demoPdf, demoPng } from "./demo-files";
 
@@ -274,6 +275,8 @@ async function clearDatabase() {
   // children before parents
   await prisma.$transaction([
     prisma.auditLog.deleteMany(),
+    prisma.stockCountLine.deleteMany(),
+    prisma.stockCount.deleteMany(),
     prisma.inventoryTransaction.deleteMany(),
     prisma.materialIssueLine.deleteMany(),
     prisma.materialIssue.deleteMany(),
@@ -523,6 +526,20 @@ async function main() {
   ]);
 
   const refreshed = await refreshLotWorkflow(prisma, {});
+
+  // Stock counts: a completed count (an exportable record, with one difference) and the
+  // monthly count task the app creates for last month (open, ready to demo).
+  {
+    const sheet = await countSheet(prisma);
+    const countId = await startAdhocCount(prisma, users.A3.id);
+    const entries = sheet.flatMap((g) => g.lots).map((l) => {
+      const short = l.lot === "CB-0825-A"; // a crushed case found during the count
+      return { lotId: l.lotId, shownQty: l.systemQty, counted: String(short ? l.systemQty - 25 : l.systemQty), reason: short ? "25 dividers crushed under a pallet — discarded" : null };
+    });
+    const r = await submitCount(prisma, users.A3.id, countId, entries, day(today), "Demo: full count of both locations");
+    if (!("ok" in r)) throw new Error(`Demo count not submitted: ${JSON.stringify(r)}`);
+  }
+  await ensureMonthlyCounts(prisma);
   const counts = {
     users: await prisma.user.count(),
     categories: await prisma.category.count(),

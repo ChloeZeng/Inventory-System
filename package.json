@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "prisma db seed",
     "seed:demo": "tsx scripts/seed-demo.ts",
+    "counts:schedule": "tsx scripts/schedule-counts.ts",
     "db:refresh-workflow": "tsx scripts/refresh-workflow.ts",
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio"

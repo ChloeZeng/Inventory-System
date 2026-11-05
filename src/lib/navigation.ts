@@ -31,7 +31,7 @@ export const SETTINGS: NavGroup = {
 };
 
 // Pages reached from Inventory (lots, receiving, usage) keep Inventory highlighted.
-const ALIASES: Record<string, string[]> = { "/inventory": ["/lots", "/usage", "/receive", "/issues"] };
+const ALIASES: Record<string, string[]> = { "/inventory": ["/lots", "/usage", "/receive", "/issues"], "/tasks": ["/counts"] };
 
 export function isActive(pathname: string, href: string) {
   const match = (h: string) => (h === "/" ? pathname === "/" : pathname === h || pathname.startsWith(`${h}/`));

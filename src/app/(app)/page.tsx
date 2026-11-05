@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/current-user";
 import { QUEUES, type QueueKey } from "@/lib/workflow";
 import { QUEUE_KEYS, queueCounts, queueEntries } from "@/lib/work-queries";
-import { countsDueTotal, formatAvailable, missingDocuments, recentActivity, stockByCategory } from "@/lib/overview";
+import { formatAvailable, missingDocuments, openCounts, recentActivity, stockByCategory } from "@/lib/overview";
 import { plural } from "@/lib/text";
-import { formatDateTime } from "@/components/ui";
+import { formatDate, formatDateTime } from "@/components/ui";
 import { QueueRow } from "@/components/task-list";
 import { HomeTour } from "@/components/home-tour";
 
@@ -17,11 +17,11 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
   const user = await getCurrentUser();
   if (!user) redirect("/welcome?step=who");
 
-  const [stock, counts, docs, countDue, activity, ...perQueue] = await Promise.all([
+  const [stock, counts, docs, stockCounts, activity, ...perQueue] = await Promise.all([
     stockByCategory(),
     queueCounts(user, {}),
     missingDocuments(),
-    countsDueTotal(),
+    openCounts(),
     recentActivity(10),
     // the three most urgent: the oldest lots this user can act on, across the queues
     ...QUEUE_KEYS.map((k) => queueEntries(k, user, {}, 3, true)),
@@ -38,7 +38,14 @@ export default async function HomePage({ searchParams }: { searchParams: Promise
     { ...tile("inspection"), label: "To inspect" },
     tile("release"),
     { label: "Missing documents", count: docs.length, sub: plural(docs.length, "lot"), href: "/tasks?type=documents" },
-    { label: "Monthly count due", count: countDue, sub: "released lots not counted this month", href: "/tasks?type=count" },
+    {
+      label: "Monthly count",
+      count: stockCounts.open.length,
+      sub: stockCounts.open.length
+        ? `due ${formatDate(stockCounts.open[0].dueDate)} · ${plural(stockCounts.lotsToCount, "lot")}`
+        : `next due ${formatDate(new Date(`${stockCounts.next}T00:00:00Z`))}`,
+      href: stockCounts.open.length === 1 ? `/counts/${stockCounts.open[0].id}` : "/tasks?type=count",
+    },
   ];
   const startTour = sp.tour === "1" || !user.tourCompletedAt;
 

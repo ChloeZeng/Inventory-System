@@ -113,23 +113,40 @@ const FIELD_LABELS: Record<string, string> = {
   lossQty: "Loss",
   returnedQty: "Returned",
   productReason: "Reason (dedicated to another product)",
+  // stock count
+  countNo: "Count no.",
+  kind: "Kind",
+  period: "Month",
+  dueDate: "Due",
+  startedById: "Started by",
+  completedById: "Submitted by",
+  completedAt: "Submitted at",
+  countDate: "Count date",
+  countId: "Stock count",
+  systemQty: "System qty",
+  countedQty: "Counted qty",
+  difference: "Difference",
+  transactionId: "Count adjustment",
   reason: "Reason",
 };
 
 // Where a field means something else on one table (confirming a material issue is not a QC step).
 const TABLE_FIELD_LABELS: Record<string, Record<string, string>> = {
   MaterialIssue: { confirmedById: "Confirmed by", status: "Status" },
+  StockCount: { status: "Status" },
 };
 
 const TABLE_LABELS: Record<string, string> = {
   InventoryTransaction: "Inventory transaction",
   MaterialIssue: "Material issue",
   MaterialIssueLine: "Material issue line",
+  StockCount: "Stock count",
+  StockCountLine: "Counted lot",
 };
 
 const ROLE_LABELS: Record<string, string> = { user: "User", admin: "Admin", warehouse: "Warehouse (removed role)", qc: "QC (removed role)" };
 
-const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById", "confirmedById", "createdById", "cancelledById"];
+const USER_FIELDS = ["receivedById", "operatorId", "releasedById", "uploadedById", "inspectedById", "qtyDiffResolvedById", "rejectedById", "confirmedById", "createdById", "cancelledById", "startedById", "completedById"];
 
 function humanize(field: string) {
   const s = field.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase();
@@ -150,7 +167,7 @@ function recordIds(rows: AuditLog[], table: string) {
 
 async function nameMaps(rows: AuditLog[]) {
   const lotIds = [...ids(rows, ["lotId"]), ...recordIds(rows, "Lot")];
-  const [categories, suppliers, items, receipts, lots, locations, rooms, users, documents, transactions, allCategories, issues, issueLines] =
+  const [categories, suppliers, items, receipts, lots, locations, rooms, users, documents, transactions, allCategories, issues, issueLines, stockCounts, countLines] =
     await Promise.all([
       prisma.category.findMany({ where: { id: { in: ids(rows, ["categoryId"]) } } }),
       prisma.supplier.findMany({ where: { id: { in: [...ids(rows, ["supplierId"]), ...recordIds(rows, "Supplier")] } } }),
@@ -168,6 +185,11 @@ async function nameMaps(rows: AuditLog[]) {
         where: { id: { in: [...ids(rows, ["issueLineId"]), ...recordIds(rows, "MaterialIssueLine")] } },
         select: { id: true, sortOrder: true, issue: { select: { issueNo: true } } },
       }),
+      prisma.stockCount.findMany({ where: { id: { in: [...ids(rows, ["countId"]), ...recordIds(rows, "StockCount")] } }, select: { id: true, countNo: true } }),
+      prisma.stockCountLine.findMany({
+        where: { id: { in: recordIds(rows, "StockCountLine") } },
+        select: { id: true, lotId: true, count: { select: { countNo: true } }, lot: { select: { supplierBatchNo: true, lotNo: true } } },
+      }),
     ]);
 
   const lotName = (l: (typeof lots)[number]) => l.supplierBatchNo ?? l.lotNo ?? `Lot #${l.id}`;
@@ -181,6 +203,7 @@ async function nameMaps(rows: AuditLog[]) {
     roomId: new Map(rooms.map((r) => [r.id, `${r.name} (${r.location.name})`])),
     issueId: new Map(issues.map((i) => [i.id, i.issueNo])),
     issueLineId: new Map(issueLines.map((l) => [l.id, `${l.issue.issueNo} line ${l.sortOrder}`])),
+    countId: new Map(stockCounts.map((c) => [c.id, c.countNo])),
   };
   const userNames = new Map(users.map((u) => [u.id, u.name]));
   for (const f of USER_FIELDS) fk[f] = userNames;
@@ -194,6 +217,8 @@ async function nameMaps(rows: AuditLog[]) {
     Document: new Map(documents.map((d) => [d.id, `${d.type} — ${d.fileName}`])),
     Inspection: new Map(recordIds(rows, "Inspection").map((id) => [id, `F.WD.003 #${id}`])),
     MaterialIssue: new Map(issues.map((i) => [i.id, i.issueNo])),
+    StockCount: new Map(stockCounts.map((c) => [c.id, c.countNo])),
+    StockCountLine: new Map(countLines.map((l) => [l.id, `${l.count.countNo} · lot ${l.lot.supplierBatchNo ?? l.lot.lotNo ?? l.lotId}`])),
     MaterialIssueLine: new Map(issueLines.map((l) => [l.id, `${l.issue.issueNo} line ${l.sortOrder}`])),
     InventoryTransaction: new Map(
       transactions.map((t) => [t.id, `${transactionTypeLabel(t.type)} ${t.qty > 0 ? "+" : ""}${t.qty.toLocaleString()}`]),
@@ -232,6 +257,8 @@ function formatValue(table: string, field: string, raw: string | null, maps: Map
   if (field === "type" && table === "Supplier") return supplierTypeLabel(raw);
   if (field === "type" && table === "InventoryTransaction") return transactionTypeLabel(raw);
   if (field === "status" && table === "MaterialIssue") return issueStatusLabel(raw);
+  if (field === "status" && table === "StockCount") return raw === "open" ? "To count" : raw === "completed" ? "Completed" : raw;
+  if (field === "kind" && table === "StockCount") return raw === "monthly" ? "Monthly" : raw === "adhoc" ? "Ad hoc" : raw;
   if (field === "supplierType") return supplierTypeLabel(raw);
   if (field === "role" && table === "User") return ROLE_LABELS[raw] ?? raw;
   if (field === "segregation") return segregationLabel(raw);

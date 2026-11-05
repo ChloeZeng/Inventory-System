@@ -2,12 +2,14 @@
 // counts due and recent activity. Lot balances come from the workflow cache (Lot.wfBalance),
 // rewritten with every transaction; the ledger stays authoritative.
 
-import type { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { categoryLabel, formatQty, itemUnit } from "./category-config";
 import { LOT_INCLUDE, lotLabel, lotStatus } from "./records";
 import { USAGE_TYPES, transactionTypeLabel } from "./constants";
 import { searchWhere, type ListFilters } from "./work-queries";
+import { ensureMonthlyCounts } from "./stock-count-db";
+import { nextCountDate } from "./stock-count";
+import { todayDateInput } from "./forms";
 
 // ---- Stock by category -------------------------------------------------------------------------
 
@@ -75,47 +77,16 @@ export async function missingDocuments(f: ListFilters = {}): Promise<MissingDocs
 }
 
 // ---- Monthly stock count ---------------------------------------------------------------------------
-// Every released lot with stock is counted once a calendar month. A count is recorded as a
-// count adjustment (0 when the count matches), so a lot is due when it has none this month.
+// The count itself is a StockCount (stock-count-db.ts): created as a task on the last working
+// day of the month; open until it is submitted.
 
-export function startOfMonth(now = new Date()) {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
-function countDueWhere(f: ListFilters, now: Date): Prisma.LotWhereInput {
-  return {
-    AND: [
-      searchWhere(f),
-      { qcStatus: "Released", wfBalance: { gt: 0 } },
-      { transactions: { none: { type: "count_adjustment", date: { gte: startOfMonth(now) } } } },
-    ],
-  };
-}
-
-export function countsDueTotal(f: ListFilters = {}, now = new Date()) {
-  return prisma.lot.count({ where: countDueWhere(f, now) });
-}
-
-export async function countsDue(f: ListFilters = {}, take = 10, now = new Date()) {
-  const lots = await prisma.lot.findMany({
-    where: countDueWhere(f, now),
-    include: {
-      item: { include: { category: true } },
-      location: true,
-      transactions: { where: { type: "count_adjustment" }, orderBy: { date: "desc" }, take: 1, select: { date: true } },
-    },
-    orderBy: [{ releasedAt: "asc" }, { id: "asc" }],
-    take,
-  });
-  return lots.map((l) => ({
-    lotId: l.id,
-    lotLabel: lotLabel(l),
-    itemName: l.item.name,
-    itemCode: l.item.code,
-    location: l.location.name,
-    balance: formatQty(l.wfBalance, itemUnit(l.item)),
-    lastCounted: l.transactions[0]?.date ?? null,
-  }));
+export async function openCounts() {
+  await ensureMonthlyCounts(prisma);
+  const [open, lots] = await Promise.all([
+    prisma.stockCount.findMany({ where: { status: "open" }, orderBy: [{ dueDate: "asc" }, { id: "asc" }] }),
+    prisma.lot.count({ where: { wfBalance: { gt: 0 } } }),
+  ]);
+  return { open, lotsToCount: lots, next: nextCountDate(todayDateInput()) };
 }
 
 // ---- Recent activity --------------------------------------------------------------------------------

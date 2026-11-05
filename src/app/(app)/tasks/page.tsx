@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { categoryLabel } from "@/lib/category-config";
 import { QUEUES } from "@/lib/workflow";
 import { QUEUE_KEYS, queueCounts, queueEntries, type ListFilters } from "@/lib/work-queries";
-import { countsDue, countsDueTotal, missingDocuments } from "@/lib/overview";
+import { missingDocuments, openCounts } from "@/lib/overview";
 import { plural } from "@/lib/text";
 import { PageHeader, formatDate, inputClass, secondaryButtonClass } from "@/components/ui";
 import { QueueRow, RecordsList, daysAgo, recordsToComplete } from "@/components/task-list";
@@ -19,7 +19,7 @@ const TYPES = [
   { key: "followup", label: QUEUES.followup.label },
   { key: "documents", label: "Missing documents" },
   { key: "issues", label: "Material issues to confirm" },
-  { key: "count", label: "Monthly count due" },
+  { key: "count", label: "Monthly count" },
   { key: "records", label: "Item and supplier records" },
 ] as const;
 type TaskType = (typeof TYPES)[number]["key"];
@@ -45,12 +45,11 @@ export default async function TasksPage({
     ...(filters.q ? { OR: [{ product: { contains: filters.q } }, { batchNo: { contains: filters.q } }, { issueNo: { contains: filters.q } }] } : {}),
     ...(filters.categoryId ? { lines: { some: { item: { categoryId: filters.categoryId } } } } : {}),
   };
-  const [categories, counts, docs, countTotal, counted, records, issueTotal, issues] = await Promise.all([
+  const [categories, counts, docs, stockCounts, records, issueTotal, issues] = await Promise.all([
     prisma.category.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
     queueCounts(user, filters),
     missingDocuments(filters),
-    countsDueTotal(filters),
-    want("count") ? countsDue(filters, take) : Promise.resolve([]),
+    openCounts(),
     // item / supplier records are not lot work: the lot filters do not apply to them
     want("records") ? recordsToComplete() : Promise.resolve([]),
     prisma.materialIssue.count({ where: issueWhere }),
@@ -67,7 +66,7 @@ export default async function TasksPage({
     followup: mine ? counts.followup.mine : counts.followup.total,
     documents: docs.length,
     issues: issueTotal,
-    count: countTotal,
+    count: stockCounts.open.length,
     records: records.length,
   };
 
@@ -224,39 +223,33 @@ export default async function TasksPage({
         )}
 
         {want("count") && (
-          <Group title="Monthly count due" count={countTotal} note="Released lots with stock and no count recorded this month.">
-            {counted.length ? (
+          <Group
+            title="Monthly count"
+            count={stockCounts.open.length}
+            note={`Every lot with stock is counted from the last working day of each month (next: ${formatDate(new Date(`${stockCounts.next}T00:00:00Z`))}).`}
+            more={{ href: "/counts", label: "All stock counts →" }}
+          >
+            {stockCounts.open.length ? (
               <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white text-sm shadow-sm">
-                {counted.map((c) => (
-                  <li key={c.lotId} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3">
+                {stockCounts.open.map((c) => (
+                  <li key={c.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3">
                     <span className="min-w-0">
-                      <Link href={`/lots/${c.lotId}`} className="font-semibold text-slate-900 hover:underline">
-                        {c.itemName}
+                      <Link href={`/counts/${c.id}`} className="font-semibold text-slate-900 hover:underline">
+                        {c.kind === "monthly" ? `Monthly count ${c.period}` : "Stock count"}
                       </Link>{" "}
-                      <span className="font-mono text-xs text-slate-500">{c.itemCode}</span>
-                      <span className="text-slate-600">
-                        {" "}
-                        · Lot <span className="font-mono">{c.lotLabel}</span>
-                      </span>
+                      <span className="font-mono text-xs text-slate-500">{c.countNo}</span>
                       <span className="block text-xs text-slate-600">
-                        {c.balance} on record · {c.location} · {c.lastCounted ? `last counted ${formatDate(c.lastCounted)}` : "never counted"}
+                        Due {formatDate(c.dueDate)} · {plural(stockCounts.lotsToCount, "lot")} with stock to count
                       </span>
                     </span>
-                    <Link href={`/lots/${c.lotId}?do=count`} className={`${secondaryButtonClass} px-3 py-1.5`}>
-                      Record count
+                    <Link href={`/counts/${c.id}`} className={`${secondaryButtonClass} px-3 py-1.5`}>
+                      Start counting
                     </Link>
                   </li>
                 ))}
               </ul>
             ) : (
-              <Empty>{filtered ? "No lots match these filters." : "Every released lot has been counted this month."}</Empty>
-            )}
-            {countTotal > counted.length && counted.length > 0 && (
-              <p className="mt-2 text-right text-sm">
-                <Link href={qs({ type: "count" })} className="font-medium text-sky-700 hover:underline">
-                  Show up to 50 →
-                </Link>
-              </p>
+              <Empty>No count is due.</Empty>
             )}
           </Group>
         )}

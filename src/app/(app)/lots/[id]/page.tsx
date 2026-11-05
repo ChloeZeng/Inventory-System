@@ -239,7 +239,7 @@ export default async function LotDetailPage({
     // loss, scrap, count — in any status (e.g. scrapping a rejected lot); ?do=count opens the count
     for (const [name, type, title] of [
       ["stock", "loss", "Record loss, scrap or count"],
-      ["count", "count_adjustment", "Record stock count"],
+      ["count", "count_adjustment", "Record count adjustment"],
     ] as const) {
       modals[`do:${name}`] = {
         title: `${title} — lot ${label}`,
@@ -342,7 +342,7 @@ export default async function LotDetailPage({
           {user && (
             <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
               <OpenActionLink name="stock">Record loss or scrap</OpenActionLink>
-              <OpenActionLink name="count">Record stock count</OpenActionLink>
+              <OpenActionLink name="count">Record count adjustment</OpenActionLink>
             </p>
           )}
         </Card>
